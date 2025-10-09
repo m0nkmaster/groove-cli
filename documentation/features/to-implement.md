@@ -8,3 +8,4 @@
 6.  Lots of 'effects/modifiers' per track
 7.  Whole song effects
 8.  yaml
+9.  AI - Of course! Use to create patterns

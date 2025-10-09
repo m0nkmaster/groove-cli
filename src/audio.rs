@@ -9,10 +9,10 @@ use rodio::{Decoder, OutputStream, Sink, Source};
 use crate::model::song::Song;
 
 #[derive(Clone)]
-pub struct SequencerConfig {
-    pub bpm: u32,
-    pub repeat: bool,
-    pub tracks: Vec<LoadedTrack>,
+struct SequencerConfig {
+    bpm: u32,
+    repeat: bool,
+    tracks: Vec<LoadedTrack>,
 }
 
 enum ControlMsg {
@@ -238,14 +238,8 @@ fn merge_runtime_preserving_phase(
     now: Instant,
 ) -> Vec<TrackRuntime> {
     use std::collections::HashMap;
-    let map: HashMap<&str, &TrackRuntime> = HashMap::new();
-    for rt in old_rt.iter() {
-        // We don't store names in runtime; infer by matching data pointer would be brittle.
-        // Instead, we match by comparing (gain, pattern len, period) is unreliable too.
-        // As a pragmatic approach, we will attempt to match by order and count; if names changed,
-        // fallback to rebuilding those tracks freshly.
-        // To improve matching, rebuild map from new_cfg names and old_cfg names in parallel.
-    }
+    // We match by position/name from the previous config; if ordering changes,
+    // we fall back to starting the new track from next boundary.
     // Build name->runtime index from old_cfg ordering
     let mut name_to_rt: HashMap<&str, &TrackRuntime> = HashMap::new();
     for (i, t) in old_cfg.tracks.iter().enumerate() {

@@ -37,7 +37,7 @@ tracks:
   pattern: !Visual ..x.
   mute: false
   solo: false
-  gain_db: -2.0
+  gain_db: -10.0
   div: 4
 - name: Hat
   sample: samples/kits/harsh 909/Closed Hat.wav
@@ -62,4 +62,16 @@ tracks:
   mute: true
   solo: false
   gain_db: -3.0
+  div: 4
+- name: samples/synth/C4.wav
+  sample: samples/synth/C4.wav
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual x+2x+2
+  mute: false
+  solo: false
+  gain_db: 0.0
   div: 4

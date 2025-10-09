@@ -20,7 +20,7 @@ This reference describes the current and planned REPL commands, syntax, semantic
   - `pattern <track_idx> "visual"` — set visual pattern on track
   - `list` — print track summaries and FX states
 - `play` / `stop` — transport control (stubbed in scaffold)
-- `save "song.toml"` / `open "song.toml"` — persistence
+- `save "song.yaml"` / `open "song.yaml"` — persistence
 - `:help`, `:q` — meta commands
 
 ## Visual Patterns

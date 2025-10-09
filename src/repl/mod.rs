@@ -133,14 +133,14 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
         "save" => {
             let path = parts
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: save \"song.toml\""))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: save \"song.yaml\""))?;
             song_io::save(song, path)?;
             Ok(Output::Text("saved".into()))
         }
         "open" => {
             let path = parts
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: open \"song.toml\""))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: open \"song.yaml\""))?;
             let s = song_io::open(path)?;
             *song = s;
             Ok(Output::Text("opened".into()))
@@ -161,14 +161,14 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
                 "on" => {
                     track.delay.on = true;
                     let msg = format!("track {} delay on", display_idx);
-                    drop(track);
+                    let _ = track;
                     crate::audio::reload_song(song);
                     Ok(Output::Text(msg))
                 }
                 "off" => {
                     track.delay.on = false;
                     let msg = format!("track {} delay off", display_idx);
-                    drop(track);
+                    let _ = track;
                     crate::audio::reload_song(song);
                     Ok(Output::Text(msg))
                 }
@@ -202,7 +202,7 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
                         "track {} delay time {} fb{:.2} mix{:.2}",
                         display_idx, track.delay.time, track.delay.feedback, track.delay.mix
                     );
-                    drop(track);
+                    let _ = track;
                     crate::audio::reload_song(song);
                     Ok(Output::Text(msg))
                 }
@@ -231,7 +231,7 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
                 display_idx,
                 if track.mute { "on" } else { "off" }
             );
-            drop(track);
+            let _ = track;
             crate::audio::reload_song(song);
             Ok(Output::Text(msg))
         }
@@ -255,7 +255,7 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
                 display_idx,
                 if track.solo { "on" } else { "off" }
             );
-            drop(track);
+            let _ = track;
             crate::audio::reload_song(song);
             Ok(Output::Text(msg))
         }
@@ -272,7 +272,7 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
                 "track {} gain set to {:+.1}dB",
                 display_idx, track.gain_db
             );
-            drop(track);
+            let _ = track;
             crate::audio::reload_song(song);
             Ok(Output::Text(msg))
         }
@@ -293,7 +293,7 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
                 "track {} div set to {} tokens/beat",
                 display_idx, track.div
             );
-            drop(track);
+            let _ = track;
             crate::audio::reload_song(song);
             Ok(Output::Text(msg))
         }
@@ -348,8 +348,8 @@ const HELP: &str = r#"Commands:
   remove <idx>          Remove a track
   list                  List tracks
   play | stop           Transport (stubs for v0 scaffold)
-  save "song.toml"      Save current song to TOML
-  open "song.toml"      Open a song from TOML
+  save "song.yaml"      Save current song to YAML
+  open "song.yaml"      Open a song from YAML
 "#;
 
 fn parse_track_index(song: &Song, raw: &str) -> Result<usize> {

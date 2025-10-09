@@ -82,7 +82,7 @@ hh.pattern(euclid(11, 16));
 ### Global functions
 
 * `play()`, `stop()`, `bpm(n)`, `steps(n)`, `swing(percent)`
-* `save("song.toml")`, `open("song.toml")`
+* `save("song.yaml")`, `open("song.yaml")`
 * `list()`: prints tracks and key properties
 * `meter(trackId?)`: shows peak and RMS for one or all tracks
 
@@ -130,7 +130,7 @@ Edits in the REPL apply to the live object graph while audio runs. The UI reflec
 5. Pattern parser: text to events including per‑note pitch
 6. Scheduler: event queue to audio thread with pre‑roll
 7. Audio engine: sample playback, resampler, per‑track delay
-8. Persistence: serialise object graph to TOML song file
+8. Persistence: serialise object graph to YAML song file
 
 **Data flow**
 REPL edits object graph → diff emits changes → scheduler updates triggers → audio engine renders.
@@ -169,31 +169,42 @@ Reliable cross‑platform audio and decoding, a proven TUI, and a small embedded
 
 ## File formats
 
-Primary interface is the REPL script history. Persistence uses TOML for now. Later we can add a `.groove` script export of the session.
+Primary interface is the REPL script history. Persistence uses YAML. Later we can add a `.groove` script export of the session.
 
-```toml
-# song.toml
-bpm = 120
-steps = 16
-swing = 0
+```yaml
+# song.yaml
+bpm: 120
+steps: 16
+swing: 0
+repeat: true
 
-[[tracks]]
-name = "Kick"
-sample = "samples/909/kick.wav"
-delay = { on=false, time="1/4", feedback=0.35, mix=0.25 }
-pattern = { Visual = "x... x... x... x..." }
+tracks:
+  - name: "Kick"
+    sample: "samples/909/kick.wav"
+    delay:
+      on: false
+      time: "1/4"
+      feedback: 0.35
+      mix: 0.25
+    pattern: { Visual: "x... x... x... x..." }
 
-[[tracks]]
-name = "Snare"
-sample = "samples/909/snare.wav"
-delay = { on=true, time="1/4", feedback=0.35, mix=0.25 }
-pattern = { Visual = ". . . .  x . . .  . . . .  x . . ." }
+  - name: "Snare"
+    sample: "samples/909/snare.wav"
+    delay:
+      on: true
+      time: "1/4"
+      feedback: 0.35
+      mix: 0.25
+    pattern: { Visual: ". . . .  x . . .  . . . .  x . . ." }
 
-[[tracks]]
-name = "Hat"
-sample = "samples/909/hat.wav"
-delay = { on=false, time="1/4", feedback=0.35, mix=0.25 }
-pattern = { Visual = "x+2.x.x. x-1.x. x+5.x.x. x.x." }
+  - name: "Hat"
+    sample: "samples/909/hat.wav"
+    delay:
+      on: false
+      time: "1/4"
+      feedback: 0.35
+      mix: 0.25
+    pattern: { Visual: "x+2.x.x. x-1.x. x+5.x.x. x.x." }
 ```
 
 ## Visualisation
@@ -241,7 +252,7 @@ pattern = { Visual = "x+2.x.x. x-1.x. x+5.x.x. x.x." }
 * Per-note pitch with simple resample, per-note velocity 0–127
 * Per-track delay with time division, feedback, mix
 * Visual patterns and coded patterns in Rhai
-* Save and load to TOML, including coded pattern references
+* Save and load to YAML, including coded pattern references
 
 ## Non goals for v0.1
 
@@ -278,6 +289,6 @@ All development follows strict TDD. No code is written without a failing test fi
 ## Reference documents
 
 - REPL commands: `documentation/features/repl-commands.md`
-- TOML schema: `documentation/features/toml-schema.md`
+  (YAML is the persistence format; see examples above)
 - Sample autocomplete: `documentation/features/sample-autocomplete.md`
 - TUI design: `documentation/features/tui-design.md`

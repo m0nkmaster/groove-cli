@@ -62,9 +62,9 @@ Hints: Use spaces to group steps visually; 4×4 common.
 ## Interactive Confirmation
 
 ```
-> open "song.toml"
+> open "song.yaml"
 This will replace your current unsaved song. Continue? [y/N] y
-✓ loaded song.toml (3 tracks)
+✓ loaded song.yaml (3 tracks)
 ```
 
 ## Fuzzy Sample Picker
@@ -81,9 +81,9 @@ Pick a sample (type to filter, ↑/↓ to navigate, Enter to select):
 ## Progress + Long Task
 
 ```
-> save "song.toml"
+> save "song.yaml"
 Saving… [██████████░░░░░░░░] 52%  (writing patterns)
-✓ saved song.toml
+✓ saved song.yaml
 ```
 
 ## Track List + Meters
@@ -112,12 +112,12 @@ Saving… [██████████░░░░░░░░] 52%  (writing
 ## Diff Preview Before Save
 
 ```
-> save "song.toml" --preview
+> save "song.yaml" --preview
 Changes:
   track[2].fx.delay: off → time=1/8 fb=0.25 mix=0.20
   bpm: 118 → 120
 Write file? [y/N] y
-✓ saved song.toml
+✓ saved song.yaml
 ```
 
 ## Live Logs / Watch Mode
@@ -130,4 +130,3 @@ time     mix  kick snare hat
 00:13.5  -2dB -5dB -8dB  -11dB
   (press q to exit)
 ```
-

@@ -22,7 +22,7 @@ fn cli() -> Command {
                 .short('o')
                 .long("open")
                 .value_name("FILE")
-                .help("Open a Yaml song on start"),
+                .help("Open a YAML song on start"),
         )
         .arg(
             Arg::new("quiet")
@@ -58,16 +58,14 @@ fn main() -> Result<()> {
         );
     }
 
-    // If a song file exists in CWD (song.yaml preferred, then song.toml) or was opened, watch it for changes
+    // If a song file exists in CWD (song.yaml preferred) or was opened, watch it for changes
     let watch_path: Option<PathBuf> = if let Some(path) = matches.get_one::<String>("open") {
         Some(PathBuf::from(path))
     } else {
         let yaml = PathBuf::from("song.yaml");
         let yml = PathBuf::from("song.yml");
-        let toml = PathBuf::from("song.toml");
         if yaml.exists() { Some(yaml) }
         else if yml.exists() { Some(yml) }
-        else if toml.exists() { Some(toml) }
         else { None }
     };
     if let Some(song_path) = watch_path {

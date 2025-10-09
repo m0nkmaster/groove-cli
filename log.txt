@@ -1,0 +1,10 @@
+CLI GROOVEBOX REPL — bpm: 69 steps: 16 swing: 0% repeat:on (type :help)
+watching: song.toml
+[?2004h[K> [2Creloaded: song.toml (poll)
+[?2004l
+bye
+CLI GROOVEBOX REPL — bpm: 69 steps: 16 swing: 0% repeat:on (type :help)
+watching: song.toml
+[?2004h[K> [2Creloaded: song.toml (poll)
+[?2004l
+bye
