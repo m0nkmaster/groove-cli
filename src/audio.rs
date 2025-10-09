@@ -1,4 +1,3 @@
-use std::fs::File;
 use std::io::{BufReader, Cursor};
 use std::sync::{mpsc, Mutex};
 use std::time::{Duration, Instant};
@@ -239,7 +238,7 @@ fn merge_runtime_preserving_phase(
     now: Instant,
 ) -> Vec<TrackRuntime> {
     use std::collections::HashMap;
-    let mut map: HashMap<&str, &TrackRuntime> = HashMap::new();
+    let map: HashMap<&str, &TrackRuntime> = HashMap::new();
     for rt in old_rt.iter() {
         // We don't store names in runtime; infer by matching data pointer would be brittle.
         // Instead, we match by comparing (gain, pattern len, period) is unreliable too.
