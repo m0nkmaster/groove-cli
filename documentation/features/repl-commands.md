@@ -27,6 +27,7 @@ This reference describes the current and planned REPL commands, syntax, semantic
 
 - Syntax examples: `"x... x... x... x..."`, `"x+3"`, `"x@96"`, `"x!!!"`, `"x%35"`.
 - Spacing groups steps visually (e.g., 4×4 grid).
+- For broader terminal UI examples and scenario mockups, see `documentation/features/cli-ui-gallery.md`.
 
 ## Live Update Behavior
 
@@ -51,4 +52,3 @@ This reference describes the current and planned REPL commands, syntax, semantic
 
 - Methods and file paths are autocompleted.
 - Sample path autocomplete is detailed in `sample-autocomplete.md`.
-
