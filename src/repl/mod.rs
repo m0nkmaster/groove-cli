@@ -110,9 +110,10 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
             Ok(Output::Text(format!("track {} sample set", i)))
         }
         "list" => Ok(Output::Text(song.list())),
-        "play" => Ok(Output::Text(
-            "[play] (audio engine not yet implemented)".into(),
-        )),
+        "play" => {
+            crate::audio::play_song(song)?;
+            Ok(Output::Text("[play] playback finished".into()))
+        }
         "stop" => Ok(Output::Text("[stop]".into())),
         "save" => {
             let path = parts

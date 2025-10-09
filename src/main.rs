@@ -1,6 +1,7 @@
 mod model;
 mod repl;
 mod storage;
+mod audio;
 
 use anyhow::Result;
 use clap::{Arg, ArgAction, Command};

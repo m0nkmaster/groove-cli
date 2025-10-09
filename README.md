@@ -17,5 +17,5 @@ REPL commands
 - `save "song.toml"`, `open "song.toml"`
 
 Notes
-- Audio engine and TUI are not implemented yet; `play`/`stop` are stubs.
+- Audio engine and TUI are early prototypes; `play` performs a basic sample playback pass.
 - See `documentation/features/full-spec.md` for the vision and spec.
