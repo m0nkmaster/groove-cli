@@ -1,0 +1,65 @@
+bpm: 69
+steps: 16
+swing: 0
+repeat: true
+tracks:
+- name: Kick
+  sample: samples/kits/harsh 909/Kick Short.wav
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual x...
+  mute: false
+  solo: false
+  gain_db: 0.0
+  div: 4
+- name: Snare
+  sample: samples/kits/harsh 909/Snare.wav
+  delay:
+    on: true
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual ..x...x.
+  mute: false
+  solo: false
+  gain_db: 0.0
+  div: 4
+- name: Clap
+  sample: samples/kits/harsh 909/Clap.wav
+  delay:
+    on: false
+    time: 1/8
+    feedback: 0.25
+    mix: 0.2
+  pattern: !Visual ..x.
+  mute: false
+  solo: false
+  gain_db: -2.0
+  div: 4
+- name: Hat
+  sample: samples/kits/harsh 909/Closed Hat.wav
+  delay:
+    on: false
+    time: 1/8
+    feedback: 0.2
+    mix: 0.15
+  pattern: !Visual x
+  mute: false
+  solo: false
+  gain_db: -6.0
+  div: 4
+- name: Rim
+  sample: samples/kits/harsh 909/Rim.wav
+  delay:
+    on: false
+    time: 1/8
+    feedback: 0.2
+    mix: 0.15
+  pattern: !Visual x...
+  mute: true
+  solo: false
+  gain_db: -3.0
+  div: 4

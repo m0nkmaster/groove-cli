@@ -57,12 +57,17 @@ fn main() -> Result<()> {
         );
     }
 
-    // If a song file exists in CWD (song.toml) or was opened, watch it for changes
+    // If a song file exists in CWD (song.yaml preferred, then song.toml) or was opened, watch it for changes
     let watch_path: Option<PathBuf> = if let Some(path) = matches.get_one::<String>("open") {
         Some(PathBuf::from(path))
     } else {
-        let p = PathBuf::from("song.toml");
-        if p.exists() { Some(p) } else { None }
+        let yaml = PathBuf::from("song.yaml");
+        let yml = PathBuf::from("song.yml");
+        let toml = PathBuf::from("song.toml");
+        if yaml.exists() { Some(yaml) }
+        else if yml.exists() { Some(yml) }
+        else if toml.exists() { Some(toml) }
+        else { None }
     };
     if let Some(song_path) = watch_path {
         println!("watching: {}", song_path.display());

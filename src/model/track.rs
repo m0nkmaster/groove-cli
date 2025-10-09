@@ -12,6 +12,8 @@ pub struct Track {
     pub mute: bool,
     pub solo: bool,
     pub gain_db: f32,
+    #[serde(default = "default_division")]
+    pub div: u32, // tokens per beat (default 4 => 16th notes)
 }
 
 impl Track {
@@ -24,7 +26,9 @@ impl Track {
             mute: false,
             solo: false,
             gain_db: 0.0,
+            div: default_division(),
         }
     }
 }
 
+fn default_division() -> u32 { 4 }

@@ -58,6 +58,7 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
         "bpm" => {
             if let Some(v) = parts.next() {
                 song.bpm = v.parse()?;
+                crate::audio::reload_song(song);
                 Ok(Output::Text(format!("bpm set to {}", song.bpm)))
             } else {
                 bail!("usage: bpm <number>");
@@ -66,6 +67,7 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
         "steps" => {
             if let Some(v) = parts.next() {
                 song.steps = v.parse()?;
+                crate::audio::reload_song(song);
                 Ok(Output::Text(format!("steps set to {}", song.steps)))
             } else {
                 bail!("usage: steps <number>");
@@ -74,6 +76,7 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
         "swing" => {
             if let Some(v) = parts.next() {
                 song.swing = v.parse()?;
+                crate::audio::reload_song(song);
                 Ok(Output::Text(format!("swing set to {}%", song.swing)))
             } else {
                 bail!("usage: swing <percent>");
@@ -85,6 +88,7 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
                 bail!("usage: track \"Name\"");
             }
             song.tracks.push(Track::new(name.as_str()));
+            crate::audio::reload_song(song);
             Ok(Output::Text(format!("added track {}", name)))
         }
         "pattern" => {
@@ -94,9 +98,13 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
             let pat = parts
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("usage: pattern <track_idx> \"pattern\""))?;
-            let (i, track) = track_mut(song, &idx)?;
-            track.pattern = Some(Pattern::visual(pat));
-            Ok(Output::Text(format!("track {} pattern set", i)))
+            let msg = {
+                let (i, track) = track_mut(song, &idx)?;
+                track.pattern = Some(Pattern::visual(pat));
+                format!("track {} pattern set", i)
+            };
+            crate::audio::reload_song(song);
+            Ok(Output::Text(msg))
         }
         "sample" => {
             let idx = parts
@@ -105,9 +113,13 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
             let p = parts
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("usage: sample <track_idx> \"path\""))?;
-            let (i, track) = track_mut(song, &idx)?;
-            track.sample = Some(p.to_string());
-            Ok(Output::Text(format!("track {} sample set", i)))
+            let msg = {
+                let (i, track) = track_mut(song, &idx)?;
+                track.sample = Some(p.to_string());
+                format!("track {} sample set", i)
+            };
+            crate::audio::reload_song(song);
+            Ok(Output::Text(msg))
         }
         "list" => Ok(Output::Text(song.list())),
         "play" => {
@@ -148,11 +160,17 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
             match action.as_str() {
                 "on" => {
                     track.delay.on = true;
-                    Ok(Output::Text(format!("track {} delay on", display_idx)))
+                    let msg = format!("track {} delay on", display_idx);
+                    drop(track);
+                    crate::audio::reload_song(song);
+                    Ok(Output::Text(msg))
                 }
                 "off" => {
                     track.delay.on = false;
-                    Ok(Output::Text(format!("track {} delay off", display_idx)))
+                    let msg = format!("track {} delay off", display_idx);
+                    drop(track);
+                    crate::audio::reload_song(song);
+                    Ok(Output::Text(msg))
                 }
                 "time" => {
                     let time_value = parts.next().ok_or_else(|| {
@@ -180,10 +198,13 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
                             other => bail!("unknown delay parameter: {}", other),
                         }
                     }
-                    Ok(Output::Text(format!(
+                    let msg = format!(
                         "track {} delay time {} fb{:.2} mix{:.2}",
                         display_idx, track.delay.time, track.delay.feedback, track.delay.mix
-                    )))
+                    );
+                    drop(track);
+                    crate::audio::reload_song(song);
+                    Ok(Output::Text(msg))
                 }
                 _ => {
                     bail!("usage: delay <track_idx> on|off | time \"1/4\" [fb <0..1>] [mix <0..1>]")
@@ -205,11 +226,14 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
                     track.mute = !track.mute;
                 }
             }
-            Ok(Output::Text(format!(
+            let msg = format!(
                 "track {} mute {}",
                 display_idx,
                 if track.mute { "on" } else { "off" }
-            )))
+            );
+            drop(track);
+            crate::audio::reload_song(song);
+            Ok(Output::Text(msg))
         }
         "solo" => {
             let idx = parts
@@ -226,11 +250,14 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
                     track.solo = !track.solo;
                 }
             }
-            Ok(Output::Text(format!(
+            let msg = format!(
                 "track {} solo {}",
                 display_idx,
                 if track.solo { "on" } else { "off" }
-            )))
+            );
+            drop(track);
+            crate::audio::reload_song(song);
+            Ok(Output::Text(msg))
         }
         "gain" => {
             let idx = parts
@@ -241,10 +268,34 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("usage: gain <track_idx> <db>"))?;
             track.gain_db = value.parse()?;
-            Ok(Output::Text(format!(
+            let msg = format!(
                 "track {} gain set to {:+.1}dB",
                 display_idx, track.gain_db
-            )))
+            );
+            drop(track);
+            crate::audio::reload_song(song);
+            Ok(Output::Text(msg))
+        }
+        "div" => {
+            let idx = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: div <track_idx> <tokens_per_beat>"))?;
+            let (display_idx, track) = track_mut(song, &idx)?;
+            let value = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: div <track_idx> <tokens_per_beat>"))?;
+            let v: u32 = value.parse()?;
+            if v == 0 || v > 64 {
+                bail!("div must be in 1..64");
+            }
+            track.div = v;
+            let msg = format!(
+                "track {} div set to {} tokens/beat",
+                display_idx, track.div
+            );
+            drop(track);
+            crate::audio::reload_song(song);
+            Ok(Output::Text(msg))
         }
         "remove" => {
             let idx = parts
@@ -252,6 +303,7 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
                 .ok_or_else(|| anyhow::anyhow!("usage: remove <track_idx>"))?;
             let position = parse_track_index(song, &idx)?;
             let removed = song.tracks.remove(position);
+            crate::audio::reload_song(song);
             Ok(Output::Text(format!(
                 "removed track {} ({})",
                 position + 1,

@@ -49,12 +49,13 @@ impl Song {
             let mute = if t.mute { "on" } else { "off" };
             let solo = if t.solo { "on" } else { "off" };
             out.push_str(&format!(
-                "{:>2} {}  {}  sample: {}  {}  mute:{} solo:{} gain:{:+.1}dB\n",
+                "{:>2} {}  {}  sample: {}  {}  div:{}  mute:{} solo:{} gain:{:+.1}dB\n",
                 i + 1,
                 t.name,
                 fx,
                 sample,
                 pattern,
+                t.div,
                 mute,
                 solo,
                 t.gain_db,

@@ -8,7 +8,7 @@ name = "Kick"
 sample = "samples/kits/harsh 909/Kick Short.wav"
 mute = false
 solo = false
-gain_db = 3.0
+gain_db = 0.0
 
 [tracks.delay]
 on = false
@@ -17,12 +17,12 @@ feedback = 0.3499999940395355
 mix = 0.25
 
 [tracks.pattern]
-Visual = "x...x...x...x..."
+Visual = "x..."
 
 [[tracks]]
 name = "Snare"
 sample = "samples/kits/harsh 909/Snare.wav"
-mute = true
+mute = false
 solo = false
 gain_db = 0.0
 
@@ -33,7 +33,7 @@ feedback = 0.3499999940395355
 mix = 0.25
 
 [tracks.pattern]
-Visual = "x"
+Visual = ".*.."
 
 [[tracks]]
 name = "Clap"
@@ -49,7 +49,7 @@ feedback = 0.25
 mix = 0.20000000298023224
 
 [tracks.pattern]
-Visual = "..x. ..x. ..x. ..x."
+Visual = "..x."
 
 [[tracks]]
 name = "Hat"
@@ -57,6 +57,7 @@ sample = "samples/kits/harsh 909/Closed Hat.wav"
 mute = false
 solo = false
 gain_db = -6.0
+div = 4
 
 [tracks.delay]
 on = false
@@ -65,7 +66,7 @@ feedback = 0.20000000298023224
 mix = 0.15000000596046448
 
 [tracks.pattern]
-Visual = "xx.x"
+Visual = "x"
 
 [[tracks]]
 name = "Rim"
@@ -81,4 +82,4 @@ feedback = 0.20000000298023224
 mix = 0.15000000596046448
 
 [tracks.pattern]
-Visual = ".... .... x... ...."
+Visual = "x..."
