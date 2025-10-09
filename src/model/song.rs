@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use super::pattern::Pattern;
 use super::track::Track;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,18 +30,32 @@ impl Song {
         let mut out = String::new();
         for (i, t) in self.tracks.iter().enumerate() {
             let fx = if t.delay.on {
-                format!("delay {} fb{:.2} mix{:.2}", t.delay.time, t.delay.feedback, t.delay.mix)
+                format!(
+                    "delay {} fb{:.2} mix{:.2}",
+                    t.delay.time, t.delay.feedback, t.delay.mix
+                )
             } else {
                 "delay off".to_string()
             };
+            let sample = t.sample.as_deref().unwrap_or("-");
+            let pattern = match &t.pattern {
+                Some(Pattern::Visual(p)) => format!("pattern: {}", p),
+                None => "pattern: [unset]".to_string(),
+            };
+            let mute = if t.mute { "on" } else { "off" };
+            let solo = if t.solo { "on" } else { "off" };
             out.push_str(&format!(
-                "{:>2} {}  {}\n",
+                "{:>2} {}  {}  sample: {}  {}  mute:{} solo:{} gain:{:+.1}dB\n",
                 i + 1,
                 t.name,
                 fx,
+                sample,
+                pattern,
+                mute,
+                solo,
+                t.gain_db,
             ));
         }
         out
     }
 }
-
