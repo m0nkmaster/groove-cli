@@ -9,7 +9,8 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 
-use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use std::env;
 use std::fs;
 use std::time::{Duration, SystemTime};
 
@@ -21,7 +22,7 @@ fn cli() -> Command {
                 .short('o')
                 .long("open")
                 .value_name("FILE")
-                .help("Open a TOML song on start"),
+                .help("Open a Yaml song on start"),
         )
         .arg(
             Arg::new("quiet")
@@ -82,14 +83,29 @@ fn main() -> Result<()> {
 }
 
 fn start_watcher(path: PathBuf) {
-    let parent = path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
+    // Resolve a reliable directory to watch (handle bare filenames and missing parents)
+    let parent = match path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        Some(p) => p.to_path_buf(),
+        None => env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+    };
     let file_name = path.file_name().map(|s| s.to_os_string());
     thread::spawn(move || {
         let (tx, rx) = mpsc::channel();
-        let mut watcher: RecommendedWatcher = Watcher::new(tx, notify::Config::default()).expect("watcher");
-        watcher
-            .watch(parent.as_path(), RecursiveMode::NonRecursive)
-            .expect("watch parent dir");
+        let mut watcher: RecommendedWatcher = match Watcher::new(tx, notify::Config::default()) {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("file watch disabled (create watcher failed): {}", e);
+                return;
+            }
+        };
+        if let Err(e) = watcher.watch(parent.as_path(), RecursiveMode::NonRecursive) {
+            eprintln!(
+                "file watch disabled (cannot watch parent dir '{}'): {}",
+                parent.display(),
+                e
+            );
+            return;
+        }
         loop {
             match rx.recv() {
                 Ok(event) => {
