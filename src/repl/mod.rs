@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use rustyline::{error::ReadlineError, history::DefaultHistory, Editor};
 
 use crate::model::pattern::Pattern;
@@ -39,6 +39,7 @@ pub fn run_repl(song: &mut Song) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 enum Output {
     None,
     Text(String),
@@ -80,39 +81,178 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
         }
         "track" => {
             let name: String = parts.next().unwrap_or_default();
-            if name.is_empty() { bail!("usage: track \"Name\""); }
+            if name.is_empty() {
+                bail!("usage: track \"Name\"");
+            }
             song.tracks.push(Track::new(name.as_str()));
             Ok(Output::Text(format!("added track {}", name)))
         }
         "pattern" => {
-            let idx = parts.next().ok_or_else(|| anyhow::anyhow!("usage: pattern <track_idx> \"pattern\""))?;
-            let pat = parts.next().ok_or_else(|| anyhow::anyhow!("usage: pattern <track_idx> \"pattern\""))?;
-            let i: usize = idx.parse()?;
-            if i == 0 || i > song.tracks.len() { bail!("no such track index"); }
-            song.tracks[i - 1].pattern = Some(Pattern::visual(pat));
+            let idx = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: pattern <track_idx> \"pattern\""))?;
+            let pat = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: pattern <track_idx> \"pattern\""))?;
+            let (i, track) = track_mut(song, &idx)?;
+            track.pattern = Some(Pattern::visual(pat));
             Ok(Output::Text(format!("track {} pattern set", i)))
         }
         "sample" => {
-            let idx = parts.next().ok_or_else(|| anyhow::anyhow!("usage: sample <track_idx> \"path\""))?;
-            let p = parts.next().ok_or_else(|| anyhow::anyhow!("usage: sample <track_idx> \"path\""))?;
-            let i: usize = idx.parse()?;
-            if i == 0 || i > song.tracks.len() { bail!("no such track index"); }
-            song.tracks[i - 1].sample = Some(p.to_string());
+            let idx = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: sample <track_idx> \"path\""))?;
+            let p = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: sample <track_idx> \"path\""))?;
+            let (i, track) = track_mut(song, &idx)?;
+            track.sample = Some(p.to_string());
             Ok(Output::Text(format!("track {} sample set", i)))
         }
         "list" => Ok(Output::Text(song.list())),
-        "play" => Ok(Output::Text("[play] (audio engine not yet implemented)".into())),
+        "play" => Ok(Output::Text(
+            "[play] (audio engine not yet implemented)".into(),
+        )),
         "stop" => Ok(Output::Text("[stop]".into())),
         "save" => {
-            let path = parts.next().ok_or_else(|| anyhow::anyhow!("usage: save \"song.toml\""))?;
+            let path = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: save \"song.toml\""))?;
             song_io::save(song, path)?;
             Ok(Output::Text("saved".into()))
         }
         "open" => {
-            let path = parts.next().ok_or_else(|| anyhow::anyhow!("usage: open \"song.toml\""))?;
+            let path = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: open \"song.toml\""))?;
             let s = song_io::open(path)?;
             *song = s;
             Ok(Output::Text("opened".into()))
+        }
+        "delay" => {
+            let idx = parts.next().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "usage: delay <track_idx> on|off | time \"1/4\" [fb <0..1>] [mix <0..1>]"
+                )
+            })?;
+            let (display_idx, track) = track_mut(song, &idx)?;
+            let action = parts.next().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "usage: delay <track_idx> on|off | time \"1/4\" [fb <0..1>] [mix <0..1>]"
+                )
+            })?;
+            match action.as_str() {
+                "on" => {
+                    track.delay.on = true;
+                    Ok(Output::Text(format!("track {} delay on", display_idx)))
+                }
+                "off" => {
+                    track.delay.on = false;
+                    Ok(Output::Text(format!("track {} delay off", display_idx)))
+                }
+                "time" => {
+                    let time_value = parts.next().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "usage: delay <track_idx> time \"1/4\" [fb <0..1>] [mix <0..1>]"
+                        )
+                    })?;
+                    track.delay.time = time_value;
+                    while let Some(param) = parts.next() {
+                        match param.as_str() {
+                            "fb" => {
+                                let val = parts.next().ok_or_else(|| {
+                                    anyhow::anyhow!("delay fb requires a value between 0.0 and 1.0")
+                                })?;
+                                track.delay.feedback = parse_unit_range("feedback", &val)?;
+                            }
+                            "mix" => {
+                                let val = parts.next().ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "delay mix requires a value between 0.0 and 1.0"
+                                    )
+                                })?;
+                                track.delay.mix = parse_unit_range("mix", &val)?;
+                            }
+                            other => bail!("unknown delay parameter: {}", other),
+                        }
+                    }
+                    Ok(Output::Text(format!(
+                        "track {} delay time {} fb{:.2} mix{:.2}",
+                        display_idx, track.delay.time, track.delay.feedback, track.delay.mix
+                    )))
+                }
+                _ => {
+                    bail!("usage: delay <track_idx> on|off | time \"1/4\" [fb <0..1>] [mix <0..1>]")
+                }
+            }
+        }
+        "mute" => {
+            let idx = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: mute <track_idx> [on|off]"))?;
+            let (display_idx, track) = track_mut(song, &idx)?;
+            match parts.next() {
+                Some(state) => match state.as_str() {
+                    "on" => track.mute = true,
+                    "off" => track.mute = false,
+                    _ => bail!("usage: mute <track_idx> [on|off]"),
+                },
+                None => {
+                    track.mute = !track.mute;
+                }
+            }
+            Ok(Output::Text(format!(
+                "track {} mute {}",
+                display_idx,
+                if track.mute { "on" } else { "off" }
+            )))
+        }
+        "solo" => {
+            let idx = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: solo <track_idx> [on|off]"))?;
+            let (display_idx, track) = track_mut(song, &idx)?;
+            match parts.next() {
+                Some(state) => match state.as_str() {
+                    "on" => track.solo = true,
+                    "off" => track.solo = false,
+                    _ => bail!("usage: solo <track_idx> [on|off]"),
+                },
+                None => {
+                    track.solo = !track.solo;
+                }
+            }
+            Ok(Output::Text(format!(
+                "track {} solo {}",
+                display_idx,
+                if track.solo { "on" } else { "off" }
+            )))
+        }
+        "gain" => {
+            let idx = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: gain <track_idx> <db>"))?;
+            let (display_idx, track) = track_mut(song, &idx)?;
+            let value = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: gain <track_idx> <db>"))?;
+            track.gain_db = value.parse()?;
+            Ok(Output::Text(format!(
+                "track {} gain set to {:+.1}dB",
+                display_idx, track.gain_db
+            )))
+        }
+        "remove" => {
+            let idx = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: remove <track_idx>"))?;
+            let position = parse_track_index(song, &idx)?;
+            let removed = song.tracks.remove(position);
+            Ok(Output::Text(format!(
+                "removed track {} ({})",
+                position + 1,
+                removed.name
+            )))
         }
         _ => bail!("unknown command. Try :help"),
     }
@@ -127,7 +267,9 @@ fn handle_meta(_song: &mut Song, meta: &str) -> Result<Output> {
             std::io::stdout().flush().ok();
             std::process::exit(0)
         }
-        "doc" => Ok(Output::Text("Documentation: see documentation/features/full-spec.md".into())),
+        "doc" => Ok(Output::Text(
+            "Documentation: see documentation/features/full-spec.md".into(),
+        )),
         _ => Ok(Output::Text("unknown meta command".into())),
     }
 }
@@ -142,8 +284,124 @@ const HELP: &str = r#"Commands:
   track "Name"          Add a track
   sample <idx> "path"   Set sample path on track
   pattern <idx> "..."   Set visual pattern on track
+  delay <idx> on|off    Toggle delay
+  delay <idx> time "1/4" [fb <0..1>] [mix <0..1>]
+  mute <idx> [on|off]   Toggle or set mute state
+  solo <idx> [on|off]   Toggle or set solo state
+  gain <idx> <db>       Set track gain in decibels
+  remove <idx>          Remove a track
   list                  List tracks
   play | stop           Transport (stubs for v0 scaffold)
   save "song.toml"      Save current song to TOML
   open "song.toml"      Open a song from TOML
 "#;
+
+fn parse_track_index(song: &Song, raw: &str) -> Result<usize> {
+    let idx: usize = raw.parse()?;
+    if idx == 0 || idx > song.tracks.len() {
+        bail!("no such track index");
+    }
+    Ok(idx - 1)
+}
+
+fn track_mut<'a>(song: &'a mut Song, raw: &str) -> Result<(usize, &'a mut Track)> {
+    let pos = parse_track_index(song, raw)?;
+    let track = song
+        .tracks
+        .get_mut(pos)
+        .ok_or_else(|| anyhow!("no such track index"))?;
+    Ok((pos + 1, track))
+}
+
+fn parse_unit_range(label: &str, raw: &str) -> Result<f32> {
+    let value: f32 = raw.parse()?;
+    if !(0.0..=1.0).contains(&value) {
+        bail!("{} must be between 0.0 and 1.0", label);
+    }
+    Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::pattern::Pattern;
+
+    fn song_with_track() -> Song {
+        let mut song = Song::default();
+        song.tracks.push(Track::new("Kick"));
+        song
+    }
+
+    #[test]
+    fn delay_commands_update_track() {
+        let mut song = song_with_track();
+        handle_line(&mut song, "delay 1 on").expect("delay on");
+        assert!(song.tracks[0].delay.on);
+
+        let output =
+            handle_line(&mut song, "delay 1 time \"1/8\" fb 0.5 mix 0.25").expect("delay params");
+        assert_eq!(song.tracks[0].delay.time, "1/8");
+        assert_eq!(song.tracks[0].delay.feedback, 0.5);
+        assert_eq!(song.tracks[0].delay.mix, 0.25);
+        if let Output::Text(text) = output {
+            assert!(text.contains("1/8"));
+        }
+
+        handle_line(&mut song, "delay 1 off").expect("delay off");
+        assert!(!song.tracks[0].delay.on);
+    }
+
+    #[test]
+    fn mute_and_solo_toggle_and_set() {
+        let mut song = song_with_track();
+
+        handle_line(&mut song, "mute 1").expect("mute toggle");
+        assert!(song.tracks[0].mute);
+        handle_line(&mut song, "mute 1 off").expect("mute off");
+        assert!(!song.tracks[0].mute);
+
+        handle_line(&mut song, "solo 1 on").expect("solo on");
+        assert!(song.tracks[0].solo);
+        handle_line(&mut song, "solo 1").expect("solo toggle");
+        assert!(!song.tracks[0].solo);
+    }
+
+    #[test]
+    fn gain_sets_value() {
+        let mut song = song_with_track();
+        handle_line(&mut song, "gain 1 -3.5").expect("gain set");
+        assert_eq!(song.tracks[0].gain_db, -3.5);
+    }
+
+    #[test]
+    fn remove_track_by_index() {
+        let mut song = Song::default();
+        song.tracks.push(Track::new("Kick"));
+        song.tracks.push(Track::new("Snare"));
+
+        let output = handle_line(&mut song, "remove 1").expect("remove track");
+        assert_eq!(song.tracks.len(), 1);
+        assert_eq!(song.tracks[0].name, "Snare");
+        if let Output::Text(text) = output {
+            assert!(text.contains("Kick"));
+        }
+    }
+
+    #[test]
+    fn list_includes_track_details() {
+        let mut song = Song::default();
+        let mut track = Track::new("Bass");
+        track.sample = Some("samples/bass.wav".into());
+        track.pattern = Some(Pattern::visual("x..."));
+        track.mute = true;
+        track.gain_db = -2.5;
+        song.tracks.push(track);
+
+        let list = song.list();
+        assert!(list.contains("Bass"));
+        assert!(list.contains("sample: samples/bass.wav"));
+        assert!(list.contains("pattern: x..."));
+        assert!(list.contains("mute:on"));
+        assert!(list.contains("gain:-2.5dB"));
+    }
+}
