@@ -112,9 +112,12 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
         "list" => Ok(Output::Text(song.list())),
         "play" => {
             crate::audio::play_song(song)?;
-            Ok(Output::Text("[play] playback finished".into()))
+            Ok(Output::Text("[play]".into()))
         }
-        "stop" => Ok(Output::Text("[stop]".into())),
+        "stop" => {
+            crate::audio::stop();
+            Ok(Output::Text("[stop]".into()))
+        }
         "save" => {
             let path = parts
                 .next()

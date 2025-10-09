@@ -19,9 +19,9 @@ This reference describes the current and planned REPL commands, syntax, semantic
   - `sample <track_idx> "path"` — set track sample (with autocomplete; see sample-autocomplete.md)
   - `pattern <track_idx> "visual"` — set visual pattern on track
   - `list` — print track summaries and FX states
-  - `play` / `stop` — transport control (stubbed in scaffold)
-  - `save "song.toml"` / `open "song.toml"` — persistence
-  - `:help`, `:q` — meta commands
+- `play` / `stop` — transport control (stubbed in scaffold)
+- `save "song.toml"` / `open "song.toml"` — persistence
+- `:help`, `:q` — meta commands
 
 ## Visual Patterns
 
@@ -33,6 +33,7 @@ This reference describes the current and planned REPL commands, syntax, semantic
 
 - Design target: All commands mutate the in-memory object graph. The scheduler consumes deltas safely:
   - Tempo changes (`bpm`) apply next tick.
+  - Playback defaults to `repeat: on` for songs (toggle planned via `repeat on|off`).
   - `pattern` changes for a track take effect from the next step boundary (or immediately if safe), without glitching.
   - FX parameter changes (delay on/time/fb/mix) apply atomically to the track’s effect node.
   - `mute`/`solo`/`gain` apply immediately.

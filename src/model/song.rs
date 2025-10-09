@@ -8,6 +8,8 @@ pub struct Song {
     pub bpm: u32,
     pub steps: u8,
     pub swing: u8, // percent 0..100
+    #[serde(default = "default_true")]
+    pub repeat: bool,
     pub tracks: Vec<Track>,
 }
 
@@ -17,12 +19,14 @@ impl Default for Song {
             bpm: 120,
             steps: 16,
             swing: 0,
+            repeat: true,
             tracks: Vec::new(),
         }
     }
 }
 
 impl Song {
+    pub fn repeat_on(&self) -> bool { self.repeat }
     pub fn list(&self) -> String {
         if self.tracks.is_empty() {
             return "[no tracks]".to_string();
@@ -59,3 +63,5 @@ impl Song {
         out
     }
 }
+
+fn default_true() -> bool { true }

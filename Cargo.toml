@@ -15,6 +15,8 @@ toml = "0.8"
 serde_json = "1"
 shlex = "1.3"
 rodio = { version = "0.17", default-features = false, features = ["mp3", "wav"] }
+notify = { version = "6", default-features = false, features = ["macos_fsevent", "serde"] }
+once_cell = "1"
 
 [dev-dependencies]
 assert_cmd = "2"
