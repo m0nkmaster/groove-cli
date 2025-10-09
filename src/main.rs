@@ -106,20 +106,21 @@ fn start_watcher(path: PathBuf) {
         }
         loop {
             match rx.recv() {
-                Ok(event) => {
-                    if let Ok(event) = event {
-                        // Filter for our file
-                        let relevant = event.paths.iter().any(|p| {
-                            if let Some(fname) = &file_name { p.file_name() == Some(fname.as_ref()) } else { false }
-                        });
-                        if !relevant { continue; }
-                        // On any relevant event, attempt reload (debounced)
-                        std::thread::sleep(std::time::Duration::from_millis(50));
-                        if let Ok(new_song) = storage::song::open(&path) {
-                            println!("reloaded: {} (event)", path.display());
-                            crate::audio::reload_song(&new_song);
-                        }
+                Ok(Ok(event)) => {
+                    // Filter for our file
+                    let relevant = event.paths.iter().any(|p| {
+                        if let Some(fname) = &file_name { p.file_name() == Some(fname.as_ref()) } else { false }
+                    });
+                    if !relevant { continue; }
+                    // Debounce briefly
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    if let Ok(new_song) = storage::song::open(&path) {
+                        println!("reloaded: {} (event)", path.display());
+                        crate::audio::reload_song(&new_song);
                     }
+                }
+                Ok(Err(e)) => {
+                    eprintln!("watch error: {}", e);
                 }
                 Err(_) => break,
             }

@@ -180,6 +180,8 @@ pub fn reload_song(song: &Song) {
 
 fn build_config(song: &Song) -> SequencerConfig {
     let mut tracks = Vec::new();
+    // If any track is solo, mute all non-solo tracks regardless of their mute flag.
+    let any_solo = song.tracks.iter().any(|t| t.solo);
     for t in &song.tracks {
         let Some(path) = &t.sample else { continue; };
         let bytes = match std::fs::read(path) {
@@ -193,16 +195,21 @@ fn build_config(song: &Song) -> SequencerConfig {
             Some(crate::model::pattern::Pattern::Visual(s)) => visual_to_tokens(s),
             None => Vec::new(),
         };
+        let muted = if any_solo { !t.solo } else { t.mute };
         tracks.push(LoadedTrack {
             name: t.name.clone(),
             data: bytes,
             gain: db_to_amplitude(t.gain_db),
             pattern,
             div: t.div.max(1),
-            muted: t.mute,
+            muted,
         });
     }
     SequencerConfig { bpm: song.bpm, repeat: song.repeat_on(), tracks }
+}
+
+fn is_muted(any_solo: bool, mute: bool, solo: bool) -> bool {
+    if any_solo { !solo } else { mute }
 }
 
 struct TrackRuntime {
@@ -305,12 +312,30 @@ fn time_until_next(now: Instant, next_time: Instant, period: Duration) -> Durati
 
 #[cfg(test)]
 mod tests {
-    use super::db_to_amplitude;
+    use super::{db_to_amplitude, build_config};
+    use crate::model::{song::Song, track::Track};
 
     #[test]
     fn db_to_amplitude_converts_expected_values() {
         assert!((db_to_amplitude(0.0) - 1.0).abs() < 1e-6);
         assert!(db_to_amplitude(-6.0) < 0.6);
         assert!(db_to_amplitude(6.0) > 1.9);
+    }
+}
+
+#[cfg(test)]
+mod build_config_tests {
+    use super::is_muted;
+
+    #[test]
+    fn solo_overrides_mute_logic() {
+        // No solos: respect mute flag
+        assert_eq!(is_muted(false, false, false), false);
+        assert_eq!(is_muted(false, true, false), true);
+        // With any solo: only solo tracks sound
+        assert_eq!(is_muted(true, false, false), true); // non-solo muted
+        assert_eq!(is_muted(true, true, false), true);  // non-solo muted even if muted already
+        assert_eq!(is_muted(true, true, true), false);  // solo plays
+        assert_eq!(is_muted(true, false, true), false); // solo plays
     }
 }

@@ -324,7 +324,7 @@ fn handle_meta(_song: &mut Song, meta: &str) -> Result<Output> {
             std::process::exit(0)
         }
         "doc" => Ok(Output::Text(
-            "Documentation: see documentation/features/full-spec.md".into(),
+            "Docs: see documentation/user-guide/quickstart.md and documentation/development/DEVELOPMENT.md".into(),
         )),
         _ => Ok(Output::Text("unknown meta command".into())),
     }
@@ -347,7 +347,7 @@ const HELP: &str = r#"Commands:
   gain <idx> <db>       Set track gain in decibels
   remove <idx>          Remove a track
   list                  List tracks
-  play | stop           Transport (stubs for v0 scaffold)
+  play | stop           Start/stop playback
   save "song.yaml"      Save current song to YAML
   open "song.yaml"      Open a song from YAML
 "#;
