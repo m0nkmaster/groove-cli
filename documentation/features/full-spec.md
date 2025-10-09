@@ -92,7 +92,7 @@ hh.pattern(euclid(11, 16));
 * Let-binding: `let hh = track("Hat")`
 * Properties readable via dot: `hh.name`, `hh.fx.delay.time`
 * Inline help: `:help track`, `:doc pattern`
-* Autocomplete for methods and file paths
+* Autocomplete for methods and file paths (sample selection completion; see `documentation/features/sample-autocomplete.md`)
 
 ### Minimal grammar
 
@@ -101,6 +101,15 @@ hh.pattern(euclid(11, 16));
 * Numbers: ints and floats, percentages as 0..1
 * Strings: double quotes
 * Comments: `# ...` end of line
+
+## Live updates and visibility
+
+Edits in the REPL apply to the live object graph while audio runs. The UI reflects changes instantly.
+
+* Instant apply: `bpm`, `steps`, `swing`, `mute/solo/gain`, and FX params update without restarting transport.
+* Safe boundaries: Pattern and timing changes take effect on the next step (or bar) boundary to avoid glitches.
+* TUI visibility: Track list shows concise FX summaries; meters and playhead update continuously.
+* Autocomplete: Tab-complete method names and sample paths rooted at `samples/`.
 
 ## Audio behaviour
 
@@ -168,23 +177,23 @@ bpm = 120
 steps = 16
 swing = 0
 
-[[track]]
+[[tracks]]
 name = "Kick"
 sample = "samples/909/kick.wav"
-delay = { on=false }
-pattern = "x... x... x... x..."
+delay = { on=false, time="1/4", feedback=0.35, mix=0.25 }
+pattern = { Visual = "x... x... x... x..." }
 
-[[track]]
+[[tracks]]
 name = "Snare"
 sample = "samples/909/snare.wav"
 delay = { on=true, time="1/4", feedback=0.35, mix=0.25 }
-pattern = ". . . .  x . . .  . . . .  x . . ."
+pattern = { Visual = ". . . .  x . . .  . . . .  x . . ." }
 
-[[track]]
+[[tracks]]
 name = "Hat"
 sample = "samples/909/hat.wav"
-delay = { on=false }
-pattern = "x+2.x.x. x-1.x. x+5.x.x. x.x."
+delay = { on=false, time="1/4", feedback=0.35, mix=0.25 }
+pattern = { Visual = "x+2.x.x. x-1.x. x+5.x.x. x.x." }
 ```
 
 ## Visualisation
@@ -265,3 +274,10 @@ All development follows strict TDD. No code is written without a failing test fi
 * v0.2 probability and ties, basic filter, quantisation
 * v0.3 multi‑bar patterns, per‑track swing, tempo changes, export to WAV
 * v1 Rust engine, stable low latency, richer effects, headless mode
+
+## Reference documents
+
+- REPL commands: `documentation/features/repl-commands.md`
+- TOML schema: `documentation/features/toml-schema.md`
+- Sample autocomplete: `documentation/features/sample-autocomplete.md`
+- TUI design: `documentation/features/tui-design.md`

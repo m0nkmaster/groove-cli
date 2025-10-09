@@ -1,0 +1,40 @@
+bpm = 120
+steps = 16
+swing = 0
+
+[[tracks]]
+name = "Kick"
+sample = "samples/909/kick.wav"
+delay = { on = false, time = "1/4", feedback = 0.35, mix = 0.25 }
+pattern = { Visual = "x... x... x... x..." }
+mute = false
+solo = false
+gain_db = 0.0
+
+[[tracks]]
+name = "Snare"
+sample = "samples/909/snare.wav"
+delay = { on = true, time = "1/4", feedback = 0.35, mix = 0.25 }
+pattern = { Visual = ". . . .  x . . .  . . . .  x . . ." }
+mute = false
+solo = false
+gain_db = 0.0
+
+[[tracks]]
+name = "Hat"
+sample = "samples/909/hat.wav"
+delay = { on = false, time = "1/4", feedback = 0.35, mix = 0.25 }
+pattern = { Visual = "x+2.x.x. x-1.x. x+5.x.x. x.x." }
+mute = false
+solo = false
+gain_db = 0.0
+
+[[tracks]]
+name = "Bass"
+sample = "samples/bass/bass-c2.wav"
+delay = { on = false, time = "1/8", feedback = 0.25, mix = 0.15 }
+pattern = { Visual = "x@96.. x%35.. x!!!.. x!.." }
+mute = false
+solo = false
+gain_db = -3.0
+
