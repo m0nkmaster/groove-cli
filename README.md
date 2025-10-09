@@ -1,6 +1,6 @@
-# groove-cli
+# Groove CLI!
 
-CLI groovebox with a simple REPL for building patterns and playing samples.
+Command Line Interface (CLI) groovebox with a simple REPL for building patterns and playing samples. Music making for software engineers!
 
 Status: early but usable. You can add tracks, set patterns, load samples, and play/stop. Songs save to YAML.
 
@@ -49,6 +49,5 @@ Watching files: If you open a YAML (or a `song.yaml` exists in CWD), groove-cli 
 
 - Effects (e.g., delay) are modeled but not yet applied in audio.
 - Swing and steps aren’t yet used by the audio engine.
-- No TUI yet; just REPL.
 
 Contributions welcome. See `documentation/development/DEVELOPMENT.md`.
