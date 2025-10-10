@@ -4,6 +4,7 @@ Meta
 - `:help` – Show this help
 - `:q` / `:quit` / `:exit` – Exit the REPL
 - `:doc` – Print where to find docs locally
+ - `:live [on|off]` – Toggle or show the live playing view
 
 Song
 - `bpm <n>` – Set tempo (e.g., 120)
@@ -16,6 +17,7 @@ Song
 Transport
 - `play` – Start playback
 - `stop` – Stop playback
+ - `clear` – Clear the terminal output region used by live view
 
 Tracks
 - `track "Name"` – Add a new track
@@ -31,4 +33,3 @@ Notes
 - Paths may contain spaces; wrap in quotes.
 - Visual patterns ignore whitespace; use spaces to group beats.
 - If any track is solo, all non‑solo tracks are muted.
-

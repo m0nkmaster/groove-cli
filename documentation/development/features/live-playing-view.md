@@ -8,20 +8,20 @@ This document describes the lightweight “live playing view” that can be togg
 - `:live off` — disable it
 - `:live` — print current state
 
-When enabled, the REPL prints a compact status line before each prompt showing tempo, steps, swing, and whether audio is currently playing. If playback is running, a per‑track grid is rendered with the current playhead position highlighted in green.
+When enabled, a lightweight background ticker prints a compact status line showing whether audio is currently playing. If playback is running, a per‑track grid is rendered with the current playhead position highlighted in green.
 
 Example interaction:
 
 ```
 > :live on
 live view on
-[live] bpm:120 steps:16 swing:0% status:stopped
+[live] status:stopped
 > play
 [play]
-[live] bpm:120 steps:16 swing:0% status:playing
+[live] status:playing
 > stop
 [stop]
-[live] bpm:120 steps:16 swing:0% status:stopped
+[live] status:stopped
 > :live off
 live view off
 >
@@ -39,7 +39,7 @@ live view off
 Playhead location is shown in green for each track.
 
 ```
-[live] bpm:124 steps:16 swing:0% status:playing
+[live] status:playing
 Tracks:
 1 Kick   | x . \x1b[32mx\x1b[0m . x . . . x . . . x . . .
 2 Snare  | . . . . \x1b[32mx\x1b[0m . . . . . . . x . . .
@@ -48,7 +48,6 @@ Tracks:
 
 ## Notes for Development
 
-- The current implementation avoids timers or background redraw loops in the REPL; the grid reflects the latest audio snapshot when the prompt appears.
 - When `:live on` and playback is active, a lightweight background ticker prints the header + grid automatically whenever the playhead advances (about every 250ms). This keeps output readable and avoids constant spam.
 - The `status:playing` indicator reflects the audio engine’s runtime state.
 - Future enhancements can reuse this toggle to drive a Ratatui/TUI panel or structured redraw.

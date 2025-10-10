@@ -30,6 +30,10 @@ CLI GROOVEBOX REPL — bpm: 120 steps: 16 swing: 0% repeat:on (type :help)
 - `play`
 - `stop`
 
+Optional live view:
+- `:live on` to show a compact status line and a per‑track grid while playing.
+- `clear` to manually clear the live output region if needed.
+
 ## Save and Open Songs
 
 - Save to YAML: `save "songs/song.yaml"`
@@ -42,4 +46,3 @@ If a `song.yaml` exists in your current directory (or you pass `-o <file>`), the
 - `list` prints your tracks with their settings and patterns.
 - `mute 1` or `solo 1` to focus listening.
 - `gain 1 -3.0` to trim a loud sample.
-

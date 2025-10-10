@@ -19,6 +19,7 @@ This document is for engineers working on groove-cli. It describes the architect
 - `build_config(song)` converts the model into a runtime config; if any track is `solo`, non‑solo tracks are muted.
 - The scheduler ticks per track using `div` (tokens per beat) and `bpm`. It queues short `rodio` sources at each hit.
 - File watching uses `notify` for directory events + a lightweight polling fallback to catch atomic‑rename editors.
+- The REPL installs a `rustyline` external printer and runs a lightweight ticker when `:live on` to redraw a small status header and live grid without disrupting the input line.
 
 ## Conventions
 
@@ -49,4 +50,3 @@ Common commands:
 - Implement swing/steps in scheduler
 - REPL autocompletion for `sample` paths (see `development/features/sample-autocomplete.md`)
 - TUI for track visualization and meters
-

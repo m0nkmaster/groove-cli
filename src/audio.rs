@@ -249,6 +249,7 @@ fn build_config(song: &Song) -> SequencerConfig {
     SequencerConfig { bpm: song.bpm, repeat: song.repeat_on(), tracks }
 }
 
+#[cfg(test)]
 fn is_muted(any_solo: bool, mute: bool, solo: bool) -> bool {
     if any_solo { !solo } else { mute }
 }
@@ -282,7 +283,7 @@ fn build_runtime(cfg: &SequencerConfig) -> Vec<TrackRuntime> {
 fn merge_runtime_preserving_phase(
     old_cfg: &SequencerConfig,
     new_cfg: &SequencerConfig,
-    old_rt: &Vec<TrackRuntime>,
+    old_rt: &[TrackRuntime],
     now: Instant,
 ) -> Vec<TrackRuntime> {
     use std::collections::HashMap;
@@ -351,7 +352,7 @@ fn time_until_next(now: Instant, next_time: Instant, period: Duration) -> Durati
     }
 }
 
-fn update_live_snapshot(cfg: &SequencerConfig, rt: &Vec<TrackRuntime>) {
+fn update_live_snapshot(cfg: &SequencerConfig, rt: &[TrackRuntime]) {
     let mut tracks = Vec::with_capacity(cfg.tracks.len());
     for (i, t) in cfg.tracks.iter().enumerate() {
         if let Some(r) = rt.get(i) {
@@ -370,8 +371,7 @@ fn update_live_snapshot(cfg: &SequencerConfig, rt: &Vec<TrackRuntime>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{db_to_amplitude, build_config};
-    use crate::model::{song::Song, track::Track};
+    use super::db_to_amplitude;
 
     #[test]
     fn db_to_amplitude_converts_expected_values() {

@@ -25,6 +25,10 @@ In the REPL, try:
 - `bpm 120`
 - `play` / `stop`
 
+Live view:
+- `:live on` toggles a lightweight status header and track grid while playing.
+- `clear` clears the terminal region used by the live view.
+
 Type `:help` for the full built-in command list.
 
 Watching files: If you open a YAML (or a `song.yaml` exists in CWD), groove-cli watches it for changes and live‑reloads playback.
@@ -44,6 +48,7 @@ Watching files: If you open a YAML (or a `song.yaml` exists in CWD), groove-cli 
 - REPL with commands for bpm/steps/swing, track add/remove, sample assignment, pattern set, mute/solo, gain, division, save/open.
 - Simple audio sequencer (per‑track division, gain, mute; solo overrides mute).
 - Hot reload from YAML file via filesystem watcher + polling fallback.
+ - Live playing view toggle with periodic, non-intrusive updates.
 
 ## Limitations / Roadmap
 

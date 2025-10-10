@@ -25,8 +25,8 @@ pub fn run_repl(song: &mut Song) -> Result<()> {
     }
     let mut _line_no: usize = 1;
     loop {
-        let prompt = format!("> ");
-        match rl.readline(&prompt) {
+        let prompt = "> ";
+        match rl.readline(prompt) {
             Ok(line) => {
                 if line.trim().is_empty() {
                     continue;
@@ -62,8 +62,8 @@ enum Output {
 
 fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
     let l = line.trim();
-    if l.starts_with(':') {
-        return handle_meta(song, &l[1..]);
+    if let Some(rest) = l.strip_prefix(':') {
+        return handle_meta(song, rest);
     }
 
     // Simple commands for MVP scaffolding
@@ -349,18 +349,18 @@ fn handle_meta(_song: &mut Song, meta: &str) -> Result<Output> {
         "doc" => Ok(Output::Text(
             "Docs: see documentation/user-guide/quickstart.md and documentation/development/DEVELOPMENT.md".into(),
         )),
-        s if s == "live" => Ok(Output::Text(format!(
+        "live" => Ok(Output::Text(format!(
             "live view: {}",
             if live_view_enabled() { "on" } else { "off" }
         ))),
-        s if s == "live on" => {
+        "live on" => {
             set_live_view(true);
             ensure_live_ticker();
             // force first render
             if let Ok(mut g) = LAST_TOKENS.lock() { *g = None; }
             Ok(Output::Text("live view on".into()))
         }
-        s if s == "live off" => {
+        "live off" => {
             set_live_view(false);
             if let Ok(mut g) = LAST_TOKENS.lock() { *g = None; }
             // Clear previously drawn region
@@ -445,6 +445,7 @@ pub(crate) fn live_view_enabled() -> bool {
 const GREEN: &str = "\x1b[32m";
 const RESET: &str = "\x1b[0m";
 
+#[cfg(test)]
 fn render_live_grid(song: &Song, snap: &crate::audio::LiveSnapshot) -> String {
     // Map track name -> (pattern bits, token index)
     // Render in the order of song.tracks
@@ -492,7 +493,8 @@ fn render_live_grid_from_snapshot(snap: &crate::audio::LiveSnapshot) -> String {
 
 // ---------------- Live ticker -----------------
 static TICKER_STARTED: AtomicBool = AtomicBool::new(false);
-static LAST_TOKENS: once_cell::sync::Lazy<StdMutex<Option<Vec<(String, usize)>>>> =
+type TokensState = Option<Vec<(String, usize)>>;
+static LAST_TOKENS: once_cell::sync::Lazy<StdMutex<TokensState>> =
     once_cell::sync::Lazy::new(|| StdMutex::new(None));
 static LAST_HEIGHT: once_cell::sync::Lazy<StdMutex<usize>> =
     once_cell::sync::Lazy::new(|| StdMutex::new(0));
@@ -524,7 +526,7 @@ fn ensure_live_ticker() {
             loop {
                 if !live_view_enabled() { break; }
                 let playing = crate::audio::is_playing();
-                let mut status_changed = false;
+                let status_changed;
                 {
                     let mut prev = PREV_PLAYING.lock().unwrap();
                     status_changed = (*prev).map(|p| p != playing).unwrap_or(true);
