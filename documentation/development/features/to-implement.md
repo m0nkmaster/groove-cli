@@ -3,6 +3,7 @@
 1.  Handle long samples (loops)
 2.  Clipping vs Oneshot
 3.  Chopping and Cropping (ms?)
+4.  Edit patterns
 5.  Color
 6.  Simpler naming - double quotes not required, file extension not required, assumes correct folders
 7.  Chaining syntax - track(1).color(blue).sample(kick).delay(3).solo(1).play (baseline chaining parser implemented; add higher-level helpers like color)

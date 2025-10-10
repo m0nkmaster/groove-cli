@@ -80,7 +80,20 @@ tracks:
   solo: false
   playback: gate
   gain_db: 0.0
-  div: 8
+  div: 4
+- name: Synth2
+  sample: samples/synth/C4_2.wav
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual xx. x+7. x+3.. x+5 | x.. x+10. x+7.. x+5
+  mute: false
+  solo: false
+  playback: gate
+  gain_db: 0.0
+  div: 4
 - name: Amen
   sample: samples/loops/amen-120.mp3
   delay:
@@ -88,7 +101,7 @@ tracks:
     time: 1/4
     feedback: 0.35
     mix: 0.25
-  pattern: !Visual x(.)*31
+  pattern: !Visual x(.)*15 (....)*4
   mute: false
   solo: false
   playback: mono
