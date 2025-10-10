@@ -1,5 +1,6 @@
 use std::io::{BufReader, Cursor};
 use std::sync::{mpsc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
@@ -7,6 +8,34 @@ use once_cell::sync::OnceCell;
 use rodio::{Decoder, OutputStream, Sink, Source};
 
 use crate::model::song::Song;
+
+static PLAYING: AtomicBool = AtomicBool::new(false);
+
+pub fn is_playing() -> bool {
+    PLAYING.load(Ordering::SeqCst)
+}
+
+// ------ Live snapshot state for REPL ------
+#[derive(Clone, Debug)]
+pub struct LiveTrackSnapshot {
+    pub name: String,
+    pub token_index: usize,
+    pub pattern: Vec<bool>,
+}
+
+#[derive(Clone, Debug)]
+pub struct LiveSnapshot {
+    pub tracks: Vec<LiveTrackSnapshot>,
+}
+
+fn live_state_cell() -> &'static Mutex<Option<LiveSnapshot>> {
+    static CELL: OnceCell<Mutex<Option<LiveSnapshot>>> = OnceCell::new();
+    CELL.get_or_init(|| Mutex::new(None))
+}
+
+pub fn snapshot_live_state() -> Option<LiveSnapshot> {
+    live_state_cell().lock().ok().and_then(|g| g.clone())
+}
 
 #[derive(Clone)]
 struct SequencerConfig {
@@ -69,6 +98,8 @@ pub fn play_song(song: &Song) -> Result<()> {
             Some(start + Duration::from_secs_f64(max_secs))
         };
         let mut voices: Vec<Sink> = Vec::new();
+        // mark playing on entry
+        PLAYING.store(true, Ordering::SeqCst);
         'outer: loop {
             // Process control messages, rebuild runtime state on Update
             while let Ok(msg) = rx.try_recv() {
@@ -125,6 +156,9 @@ pub fn play_song(song: &Song) -> Result<()> {
             // Clean up finished voices
             voices.retain(|s| !s.empty());
 
+            // Update live snapshot for REPL display
+            update_live_snapshot(&current, &rt);
+
             // Sleep until the next nearest event to reduce CPU
             let next_due = rt.iter().map(|t| t.next_time).min().unwrap_or(now + Duration::from_millis(10));
             let wait = if next_due > now { next_due - now } else { Duration::from_millis(1) };
@@ -132,11 +166,17 @@ pub fn play_song(song: &Song) -> Result<()> {
             let wait = wait.min(Duration::from_millis(25));
             std::thread::sleep(wait);
         }
+        // ensure flag reset on thread exit
+        PLAYING.store(false, Ordering::SeqCst);
+        // Clear live snapshot on exit
+        if let Ok(mut guard) = live_state_cell().lock() { *guard = None; }
     });
 
     // Store sender so we can stop
     let mut guard = transport().lock().unwrap();
     *guard = Some(tx);
+    // Mark playing true once thread is spawned
+    PLAYING.store(true, Ordering::SeqCst);
     Ok(())
 }
 
@@ -145,6 +185,7 @@ pub fn stop() {
     if let Some(tx) = guard.take() {
         let _ = tx.send(ControlMsg::Stop);
     }
+    PLAYING.store(false, Ordering::SeqCst);
 }
 
 fn db_to_amplitude(db: f32) -> f32 {
@@ -307,6 +348,23 @@ fn time_until_next(now: Instant, next_time: Instant, period: Duration) -> Durati
         let late = (now - next_time).as_secs_f64();
         let rem = p - (late % p);
         if rem == p { Duration::from_millis(0) } else { Duration::from_secs_f64(rem) }
+    }
+}
+
+fn update_live_snapshot(cfg: &SequencerConfig, rt: &Vec<TrackRuntime>) {
+    let mut tracks = Vec::with_capacity(cfg.tracks.len());
+    for (i, t) in cfg.tracks.iter().enumerate() {
+        if let Some(r) = rt.get(i) {
+            tracks.push(LiveTrackSnapshot {
+                name: t.name.clone(),
+                token_index: if r.pattern.is_empty() { 0 } else { r.token_index % r.pattern.len() },
+                pattern: r.pattern.clone(),
+            });
+        }
+    }
+    let snap = LiveSnapshot { tracks };
+    if let Ok(mut guard) = live_state_cell().lock() {
+        *guard = Some(snap);
     }
 }
 

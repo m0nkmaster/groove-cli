@@ -1,7 +1,11 @@
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex as StdMutex;
+use std::thread;
+use std::time::Duration;
 
 use anyhow::{anyhow, bail, Result};
-use rustyline::{error::ReadlineError, history::DefaultHistory, Editor};
+use rustyline::{error::ReadlineError, history::DefaultHistory, Editor, ExternalPrinter};
 
 use crate::model::pattern::Pattern;
 use crate::model::song::Song;
@@ -10,6 +14,15 @@ use crate::storage::song as song_io;
 
 pub fn run_repl(song: &mut Song) -> Result<()> {
     let mut rl = Editor::<(), DefaultHistory>::new()?;
+    // Install external printer so background logs don't break the input line
+    if let Ok(pr) = rl.create_external_printer() {
+        let lock = StdMutex::new(pr);
+        set_external_printer(Some(Box::new(move |s: String| {
+            if let Ok(mut g) = lock.lock() {
+                let _ = g.print(s);
+            }
+        })));
+    }
     let mut _line_no: usize = 1;
     loop {
         let prompt = format!("> ");
@@ -36,6 +49,8 @@ pub fn run_repl(song: &mut Song) -> Result<()> {
             }
         }
     }
+    // clear external printer on exit
+    set_external_printer(None);
     Ok(())
 }
 
@@ -326,6 +341,34 @@ fn handle_meta(_song: &mut Song, meta: &str) -> Result<Output> {
         "doc" => Ok(Output::Text(
             "Docs: see documentation/user-guide/quickstart.md and documentation/development/DEVELOPMENT.md".into(),
         )),
+        s if s == "live" => Ok(Output::Text(format!(
+            "live view: {}",
+            if live_view_enabled() { "on" } else { "off" }
+        ))),
+        s if s == "live on" => {
+            set_live_view(true);
+            ensure_live_ticker();
+            // force first render
+            if let Ok(mut g) = LAST_TOKENS.lock() { *g = None; }
+            Ok(Output::Text("live view on".into()))
+        }
+        s if s == "live off" => {
+            set_live_view(false);
+            if let Ok(mut g) = LAST_TOKENS.lock() { *g = None; }
+            // Clear previously drawn region
+            if let Ok(mut h) = LAST_HEIGHT.lock() {
+                let prev = *h;
+                if prev > 0 {
+                    let mut clear = String::new();
+                    for _ in 0..prev { clear.push_str("\x1b[1F\x1b[2K\r"); }
+                    *h = 0;
+                    print_external(clear);
+                }
+            }
+            if let Ok(mut p) = PREV_PLAYING.lock() { *p = None; }
+            if let Ok(mut s) = LAST_SNAPSHOT.lock() { *s = None; }
+            Ok(Output::Text("live view off".into()))
+        }
         _ => Ok(Output::Text("unknown meta command".into())),
     }
 }
@@ -333,6 +376,7 @@ fn handle_meta(_song: &mut Song, meta: &str) -> Result<Output> {
 const HELP: &str = r#"Commands:
   :help                 Show this help
   :q / :quit            Exit
+  :live [on|off]        Toggle or show live playing view status
 
   bpm <n>               Set tempo (e.g., 120)
   steps <n>             Set steps per bar (e.g., 16)
@@ -377,10 +421,180 @@ fn parse_unit_range(label: &str, raw: &str) -> Result<f32> {
     Ok(value)
 }
 
+// --- Live Playing View Toggle ---
+static LIVE_VIEW: AtomicBool = AtomicBool::new(false);
+
+fn set_live_view(on: bool) {
+    LIVE_VIEW.store(on, Ordering::SeqCst);
+}
+
+pub(crate) fn live_view_enabled() -> bool {
+    LIVE_VIEW.load(Ordering::SeqCst)
+}
+
+// ANSI helpers for simple highlighting
+const GREEN: &str = "\x1b[32m";
+const RESET: &str = "\x1b[0m";
+
+fn render_live_grid(song: &Song, snap: &crate::audio::LiveSnapshot) -> String {
+    // Map track name -> (pattern bits, token index)
+    // Render in the order of song.tracks
+    let mut out = String::new();
+    if snap.tracks.is_empty() { return out; }
+    out.push_str("Tracks:\n");
+    for (i, t) in song.tracks.iter().enumerate() {
+        if let Some(st) = snap.tracks.iter().find(|lt| lt.name == t.name) {
+            // Build a visual string from pattern bits and highlight current index
+            let mut parts = Vec::with_capacity(st.pattern.len());
+            for (idx, &hit) in st.pattern.iter().enumerate() {
+                let ch = if hit { 'x' } else { '.' };
+                if idx == st.token_index {
+                    parts.push(format!("{}{}{}", GREEN, ch, RESET));
+                } else {
+                    parts.push(ch.to_string());
+                }
+            }
+            let line = format!("{} {:<6} | {}\n", i + 1, t.name, parts.join(" "));
+            out.push_str(&line);
+        }
+    }
+    out
+}
+
+fn render_live_grid_from_snapshot(snap: &crate::audio::LiveSnapshot) -> String {
+    let mut out = String::new();
+    if snap.tracks.is_empty() { return out; }
+    out.push_str("Tracks:\n");
+    for (i, st) in snap.tracks.iter().enumerate() {
+        let mut parts = Vec::with_capacity(st.pattern.len());
+        for (idx, &hit) in st.pattern.iter().enumerate() {
+            let ch = if hit { 'x' } else { '.' };
+            if idx == st.token_index {
+                parts.push(format!("{}{}{}", GREEN, ch, RESET));
+            } else {
+                parts.push(ch.to_string());
+            }
+        }
+        let line = format!("{} {:<6} | {}\n", i + 1, st.name, parts.join(" "));
+        out.push_str(&line);
+    }
+    out
+}
+
+// ---------------- Live ticker -----------------
+static TICKER_STARTED: AtomicBool = AtomicBool::new(false);
+static LAST_TOKENS: once_cell::sync::Lazy<StdMutex<Option<Vec<(String, usize)>>>> =
+    once_cell::sync::Lazy::new(|| StdMutex::new(None));
+static LAST_HEIGHT: once_cell::sync::Lazy<StdMutex<usize>> =
+    once_cell::sync::Lazy::new(|| StdMutex::new(0));
+static PREV_PLAYING: once_cell::sync::Lazy<StdMutex<Option<bool>>> =
+    once_cell::sync::Lazy::new(|| StdMutex::new(None));
+static LAST_SNAPSHOT: once_cell::sync::Lazy<StdMutex<Option<crate::audio::LiveSnapshot>>> =
+    once_cell::sync::Lazy::new(|| StdMutex::new(None));
+
+type PrinterFn = Box<dyn Fn(String) + Send + Sync + 'static>;
+static EXTERNAL_PRINTER: once_cell::sync::Lazy<StdMutex<Option<PrinterFn>>> =
+    once_cell::sync::Lazy::new(|| StdMutex::new(None));
+
+fn set_external_printer(p: Option<PrinterFn>) {
+    let mut guard = EXTERNAL_PRINTER.lock().unwrap();
+    *guard = p;
+}
+
+fn print_external(s: String) {
+    if let Some(ref f) = *EXTERNAL_PRINTER.lock().unwrap() {
+        f(s);
+    } else {
+        println!("{}", s);
+    }
+}
+
+fn ensure_live_ticker() {
+    if TICKER_STARTED.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+        thread::spawn(|| {
+            loop {
+                if !live_view_enabled() { break; }
+                let playing = crate::audio::is_playing();
+                let mut status_changed = false;
+                {
+                    let mut prev = PREV_PLAYING.lock().unwrap();
+                    status_changed = (*prev).map(|p| p != playing).unwrap_or(true);
+                    *prev = Some(playing);
+                }
+
+                let mut snap_opt = crate::audio::snapshot_live_state();
+                if let Some(ref s) = snap_opt { if let Ok(mut g) = LAST_SNAPSHOT.lock() { *g = Some(s.clone()); } }
+                if snap_opt.is_none() {
+                    if let Ok(g) = LAST_SNAPSHOT.lock() { snap_opt = g.clone(); }
+                }
+
+                if let Some(snap) = snap_opt {
+                    let tokens: Vec<(String, usize)> = snap
+                        .tracks
+                        .iter()
+                        .map(|t| (t.name.clone(), t.token_index))
+                        .collect();
+                    let mut guard = LAST_TOKENS.lock().unwrap();
+                    let tokens_changed = match &*guard {
+                        Some(prev) => prev != &tokens,
+                        None => true,
+                    };
+                    if tokens_changed || status_changed {
+                        *guard = Some(tokens);
+                        let header = format!(
+                            "[live] status:{}",
+                            if playing { "playing" } else { "stopped" }
+                        );
+                        let mut lines = vec![header];
+                        let grid = render_live_grid_from_snapshot(&snap);
+                        if !grid.is_empty() { lines.extend(grid.lines().map(|s| s.to_string())); }
+                        print_live_region(lines);
+                    }
+                } else if status_changed {
+                    // No snapshot but status changed: print header only
+                    let header = format!(
+                        "[live] status:{}",
+                        if playing { "playing" } else { "stopped" }
+                    );
+                    print_live_region(vec![header]);
+                }
+                thread::sleep(Duration::from_millis(250));
+            }
+            TICKER_STARTED.store(false, Ordering::SeqCst);
+        });
+    }
+}
+
+fn print_live_region(lines: Vec<String>) {
+    let mut msg = String::new();
+    // Determine previous height and build clear+overwrite commands
+    let mut last_h = LAST_HEIGHT.lock().unwrap();
+    let prev = *last_h;
+    if prev > 0 {
+        // Move cursor up prev lines and clear each line
+        for _ in 0..prev {
+            msg.push_str("\x1b[1F\x1b[2K\r");
+        }
+    } else {
+        // Ensure a clean separation before first render
+        msg.push('\n');
+    }
+    // Write new lines
+    for (i, l) in lines.iter().enumerate() {
+        if i > 0 { msg.push('\n'); }
+        msg.push_str(l);
+    }
+    // Track new height for next refresh
+    *last_h = lines.len();
+    drop(last_h);
+    print_external(msg);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::pattern::Pattern;
+    use crate::audio::{LiveSnapshot, LiveTrackSnapshot};
 
     fn song_with_track() -> Song {
         let mut song = Song::default();
@@ -459,5 +673,70 @@ mod tests {
         assert!(list.contains("pattern: x..."));
         assert!(list.contains("mute:on"));
         assert!(list.contains("gain:-2.5dB"));
+    }
+
+    #[test]
+    fn live_toggle_meta_commands() {
+        let mut song = Song::default();
+        // default off
+        assert!(!live_view_enabled());
+
+        // query
+        if let Output::Text(t) = handle_line(&mut song, ":live").expect("meta live") {
+            assert!(t.contains("off"));
+        } else { panic!("expected text"); }
+
+        // turn on
+        if let Output::Text(t) = handle_line(&mut song, ":live on").expect(":live on") {
+            assert!(t.contains("on"));
+        } else { panic!("expected text"); }
+        assert!(live_view_enabled());
+
+        // turn off
+        if let Output::Text(t) = handle_line(&mut song, ":live off").expect(":live off") {
+            assert!(t.contains("off"));
+        } else { panic!("expected text"); }
+        assert!(!live_view_enabled());
+    }
+
+    #[test]
+    fn render_live_grid_highlights_playhead() {
+        let mut song = Song::default();
+        let mut t1 = Track::new("Kick");
+        t1.pattern = Some(Pattern::visual("x . x ."));
+        let mut t2 = Track::new("Snare");
+        t2.pattern = Some(Pattern::visual(". . x ."));
+        song.tracks.push(t1);
+        song.tracks.push(t2);
+
+        let snap = LiveSnapshot {
+            tracks: vec![
+                LiveTrackSnapshot { name: "Kick".into(), token_index: 2, pattern: vec![true,false,true,false] },
+                LiveTrackSnapshot { name: "Snare".into(), token_index: 2, pattern: vec![false,false,true,false] },
+            ]
+        };
+
+        let grid = render_live_grid(&song, &snap);
+        assert!(grid.contains("Tracks:"));
+        // Expect a green-highlighted 'x' for the playhead positions
+        assert!(grid.contains("\x1b[32mx\x1b[0m"));
+        // Ensure both tracks are present in order
+        assert!(grid.contains("1 Kick"));
+        assert!(grid.contains("2 Snare"));
+    }
+
+    #[test]
+    fn render_live_grid_from_snapshot_order_and_colors() {
+        let snap = LiveSnapshot {
+            tracks: vec![
+                LiveTrackSnapshot { name: "A".into(), token_index: 0, pattern: vec![true,false] },
+                LiveTrackSnapshot { name: "B".into(), token_index: 1, pattern: vec![true,true] },
+            ]
+        };
+        let out = render_live_grid_from_snapshot(&snap);
+        assert!(out.contains("1 A"));
+        assert!(out.contains("2 B"));
+        // Has green highlight sequences
+        assert!(out.contains("\x1b[32m"));
     }
 }
