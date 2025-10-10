@@ -17,7 +17,7 @@ This document is for engineers working on groove-cli. It describes the architect
 - REPL runs on the main thread; audio on a background thread.
 - `audio::play_song` spawns the transport thread, keeping a `Sender` in a global `OnceCell` for control messages (Stop/Update).
 - `build_config(song)` converts the model into a runtime config; if any track is `solo`, non‑solo tracks are muted.
-- The scheduler ticks per track using `div` (tokens per beat) and `bpm`. It queues short `rodio` sources at each hit.
+- The scheduler ticks per track using `div` (tokens per beat) and `bpm`. Swing (`Song.swing`) applies alternating long/short step durations while preserving average tempo. It queues short `rodio` sources at each hit.
 - File watching uses `notify` for directory events + a lightweight polling fallback to catch atomic‑rename editors.
 - The REPL installs a `rustyline` external printer and runs a lightweight ticker when `:live on` to redraw a small status header and live grid without disrupting the input line.
 

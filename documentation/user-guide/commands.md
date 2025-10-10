@@ -6,10 +6,10 @@ Meta
 - `:doc` – Print where to find docs locally
  - `:live [on|off]` – Toggle or show the live playing view
 
-Song
+ Song
 - `bpm <n>` – Set tempo (e.g., 120)
-- `steps <n>` – Set steps per bar (not yet used by audio)
-- `swing <percent>` – Set swing (0..100, not yet used by audio)
+- `steps <n>` – Set steps per bar (model only; not used in timing yet)
+- `swing <percent>` – Set swing (0..100, affects timing)
 - `list` – Print track list and settings
 - `save "song.yaml"` – Save current song to YAML
 - `open "song.yaml"` – Load a song from YAML

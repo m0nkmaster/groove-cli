@@ -53,6 +53,6 @@ Watching files: If you open a YAML (or a `song.yaml` exists in CWD), groove-cli 
 ## Limitations / Roadmap
 
 - Effects (e.g., delay) are modeled but not yet applied in audio.
-- Swing and steps aren’t yet used by the audio engine.
+- Swing is applied to timing; steps remains a model-only parameter for now.
 
 Contributions welcome. See `documentation/development/DEVELOPMENT.md`.

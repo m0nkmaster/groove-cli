@@ -40,6 +40,7 @@ pub fn snapshot_live_state() -> Option<LiveSnapshot> {
 #[derive(Clone)]
 struct SequencerConfig {
     bpm: u32,
+    swing: u8,
     repeat: bool,
     tracks: Vec<LoadedTrack>,
 }
@@ -134,7 +135,8 @@ pub fn play_song(song: &Song) -> Result<()> {
             for tr in &mut rt {
                 while now >= tr.next_time {
                     if !tr.pattern.is_empty() {
-                        let hit = tr.pattern[tr.token_index % tr.pattern.len()];
+                        let idx = tr.token_index % tr.pattern.len();
+                        let hit = tr.pattern[idx];
                         if hit && !tr.muted {
                             let cursor = Cursor::new(tr.data.clone());
                             let reader = BufReader::new(cursor);
@@ -149,7 +151,9 @@ pub fn play_song(song: &Song) -> Result<()> {
                         }
                         tr.token_index = (tr.token_index + 1) % tr.pattern.len();
                     }
-                    tr.next_time += tr.period;
+                    // Advance by swing-adjusted step duration
+                    let step = step_period_with_swing(current.bpm, tr.div, current.swing, tr.token_index.saturating_sub(1));
+                    tr.next_time += step;
                 }
             }
 
@@ -246,7 +250,7 @@ fn build_config(song: &Song) -> SequencerConfig {
             muted,
         });
     }
-    SequencerConfig { bpm: song.bpm, repeat: song.repeat_on(), tracks }
+    SequencerConfig { bpm: song.bpm, swing: song.swing, repeat: song.repeat_on(), tracks }
 }
 
 #[cfg(test)]
@@ -258,10 +262,11 @@ struct TrackRuntime {
     data: Vec<u8>,
     gain: f32,
     pattern: Vec<bool>,
-    period: Duration,
+    base_period: Duration,
     next_time: Instant,
     token_index: usize,
     muted: bool,
+    div: u32,
 }
 
 fn build_runtime(cfg: &SequencerConfig) -> Vec<TrackRuntime> {
@@ -272,10 +277,11 @@ fn build_runtime(cfg: &SequencerConfig) -> Vec<TrackRuntime> {
             data: t.data.clone(),
             gain: t.gain,
             pattern: t.pattern.clone(),
-            period: Duration::from_secs_f64(60.0 / cfg.bpm as f64 / t.div as f64),
+            base_period: base_step_period(cfg.bpm, t.div),
             next_time: now,
             token_index: 0,
             muted: t.muted,
+            div: t.div,
         })
         .collect()
 }
@@ -300,10 +306,10 @@ fn merge_runtime_preserving_phase(
     // Construct new runtime preserving phase when possible
     let mut out: Vec<TrackRuntime> = Vec::with_capacity(new_cfg.tracks.len());
     for t in &new_cfg.tracks {
-        let new_period = Duration::from_secs_f64(60.0 / new_cfg.bpm as f64 / t.div as f64);
+        let new_period = base_step_period(new_cfg.bpm, t.div);
         if let Some(old_rt) = name_to_rt.get(t.name.as_str()) {
             // Compute remaining time in old schedule
-            let old_period = old_rt.period;
+            let old_period = old_rt.base_period;
             let remaining_old = time_until_next(now, old_rt.next_time, old_period);
             let new_remaining = if old_period.as_nanos() > 0 {
                 let scale = new_period.as_secs_f64() / old_period.as_secs_f64();
@@ -317,10 +323,11 @@ fn merge_runtime_preserving_phase(
                 data: t.data.clone(),
                 gain: t.gain,
                 pattern: t.pattern.clone(),
-                period: new_period,
+                base_period: new_period,
                 next_time: new_next,
                 token_index: new_token_index,
                 muted: t.muted,
+                div: t.div,
             });
         } else {
             // New track: schedule from next token boundary
@@ -328,10 +335,11 @@ fn merge_runtime_preserving_phase(
                 data: t.data.clone(),
                 gain: t.gain,
                 pattern: t.pattern.clone(),
-                period: new_period,
+                base_period: new_period,
                 next_time: now + new_period,
                 token_index: 0,
                 muted: t.muted,
+                div: t.div,
             });
         }
     }
@@ -350,6 +358,28 @@ fn time_until_next(now: Instant, next_time: Instant, period: Duration) -> Durati
         let rem = p - (late % p);
         if rem == p { Duration::from_millis(0) } else { Duration::from_secs_f64(rem) }
     }
+}
+
+// --- Swing helpers (pure, testable) ---
+fn base_step_period(bpm: u32, div: u32) -> Duration {
+    Duration::from_secs_f64(60.0 / bpm as f64 / div.max(1) as f64)
+}
+
+fn swing_fraction(swing_percent: u8) -> f64 {
+    // Map 0..100 → 0.0..0.5 (0% no swing; 100% extreme 50/150 split)
+    (swing_percent as f64 / 100.0).min(1.0) * 0.5
+}
+
+fn step_period_with_swing(bpm: u32, div: u32, swing_percent: u8, token_index: usize) -> Duration {
+    let base = base_step_period(bpm, div);
+    if swing_percent == 0 || div == 0 {
+        return base;
+    }
+    // Apply swing as alternating long/short steps. Use even/odd token index.
+    let f = swing_fraction(swing_percent);
+    let base_sec = base.as_secs_f64();
+    let factor = if token_index.is_multiple_of(2) { 1.0 + f } else { 1.0 - f };
+    Duration::from_secs_f64(base_sec * factor)
 }
 
 fn update_live_snapshot(cfg: &SequencerConfig, rt: &[TrackRuntime]) {
@@ -371,13 +401,47 @@ fn update_live_snapshot(cfg: &SequencerConfig, rt: &[TrackRuntime]) {
 
 #[cfg(test)]
 mod tests {
-    use super::db_to_amplitude;
+    use super::{db_to_amplitude, base_step_period, step_period_with_swing};
 
     #[test]
     fn db_to_amplitude_converts_expected_values() {
         assert!((db_to_amplitude(0.0) - 1.0).abs() < 1e-6);
         assert!(db_to_amplitude(-6.0) < 0.6);
         assert!(db_to_amplitude(6.0) > 1.9);
+    }
+
+    #[test]
+    fn step_period_no_swing_equals_base() {
+        let base = base_step_period(120, 4).as_secs_f64();
+        let p0 = step_period_with_swing(120, 4, 0, 0).as_secs_f64();
+        let p1 = step_period_with_swing(120, 4, 0, 1).as_secs_f64();
+        assert!((p0 - base).abs() < 1e-9);
+        assert!((p1 - base).abs() < 1e-9);
+    }
+
+    #[test]
+    fn step_period_swing_extremes() {
+        // 120 BPM, div=4 => base = 60/120/4 = 0.125s
+        let base = base_step_period(120, 4).as_secs_f64();
+        assert!((base - 0.125).abs() < 1e-9);
+        // 100% swing => factors 1.5 and 0.5
+        let long = step_period_with_swing(120, 4, 100, 0).as_secs_f64();
+        let short = step_period_with_swing(120, 4, 100, 1).as_secs_f64();
+        assert!((long - base * 1.5).abs() < 1e-9, "long={long}");
+        assert!((short - base * 0.5).abs() < 1e-9, "short={short}");
+        // Sum remains two base steps
+        assert!(((long + short) - (base * 2.0)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn step_period_mid_swing() {
+        let base = base_step_period(100, 4).as_secs_f64();
+        // 50% swing => f=0.25 => 1.25x and 0.75x
+        let long = step_period_with_swing(100, 4, 50, 2).as_secs_f64();
+        let short = step_period_with_swing(100, 4, 50, 3).as_secs_f64();
+        assert!((long - base * 1.25).abs() < 1e-9);
+        assert!((short - base * 0.75).abs() < 1e-9);
+        assert!(((long + short) - (base * 2.0)).abs() < 1e-9);
     }
 }
 
