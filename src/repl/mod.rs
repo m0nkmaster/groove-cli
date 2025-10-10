@@ -61,9 +61,30 @@ enum Output {
 }
 
 fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
+    handle_line_internal(song, line, true)
+}
+
+fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Result<Output> {
     let l = line.trim();
     if let Some(rest) = l.strip_prefix(':') {
         return handle_meta(song, rest);
+    }
+
+    if allow_chain {
+        if let Some(commands) = parse_chained_commands(l) {
+            let mut texts = Vec::new();
+            for cmd in commands {
+                match handle_line_internal(song, &cmd, false)? {
+                    Output::None => {}
+                    Output::Text(t) => texts.push(t),
+                }
+            }
+            return Ok(if texts.is_empty() {
+                Output::None
+            } else {
+                Output::Text(texts.join("\n"))
+            });
+        }
     }
 
     // Simple commands for MVP scaffolding
@@ -335,6 +356,160 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
         }
         _ => bail!("unknown command. Try :help"),
     }
+}
+
+fn parse_chained_commands(input: &str) -> Option<Vec<String>> {
+    let chars: Vec<(usize, char)> = input.char_indices().collect();
+    let mut pos = 0;
+    let len = chars.len();
+    let mut commands = Vec::new();
+    let mut saw_separator = false;
+    let mut saw_parens = false;
+
+    while pos < len {
+        skip_whitespace(input, &chars, &mut pos);
+        if pos >= len {
+            break;
+        }
+
+        let name_start = pos;
+        while pos < len && is_ident_char(chars[pos].1) {
+            pos += 1;
+        }
+        if name_start == pos {
+            return None;
+        }
+        let name = slice_from(input, &chars, name_start, pos).to_string();
+
+        skip_whitespace(input, &chars, &mut pos);
+
+        let mut args = Vec::new();
+        if pos < len && chars[pos].1 == '(' {
+            saw_parens = true;
+            pos += 1;
+            loop {
+                skip_whitespace(input, &chars, &mut pos);
+                if pos >= len {
+                    return None;
+                }
+                if chars[pos].1 == ')' {
+                    pos += 1;
+                    break;
+                }
+
+                let arg = if chars[pos].1 == '"' {
+                    parse_string_arg(input, &chars, &mut pos)?
+                } else {
+                    parse_bare_arg(input, &chars, &mut pos)?
+                };
+                args.push(arg);
+
+                skip_whitespace(input, &chars, &mut pos);
+                if pos >= len {
+                    return None;
+                }
+                match chars[pos].1 {
+                    ',' => {
+                        pos += 1;
+                        continue;
+                    }
+                    ')' => {
+                        pos += 1;
+                        break;
+                    }
+                    _ => return None,
+                }
+            }
+        }
+
+        let mut command = name;
+        if !args.is_empty() {
+            command.push(' ');
+            command.push_str(&args.join(" "));
+        }
+        commands.push(command);
+
+        skip_whitespace(input, &chars, &mut pos);
+        if pos < len {
+            if chars[pos].1 == '.' {
+                saw_separator = true;
+                pos += 1;
+            } else {
+                return None;
+            }
+        }
+    }
+
+    if commands.is_empty() || !(saw_separator || saw_parens) {
+        None
+    } else {
+        Some(commands)
+    }
+}
+
+fn skip_whitespace(_input: &str, chars: &[(usize, char)], pos: &mut usize) {
+    while *pos < chars.len() && chars[*pos].1.is_whitespace() {
+        *pos += 1;
+    }
+}
+
+fn is_ident_char(c: char) -> bool {
+    c.is_ascii_alphabetic() || c == '_' || c.is_ascii_digit()
+}
+
+fn parse_string_arg(input: &str, chars: &[(usize, char)], pos: &mut usize) -> Option<String> {
+    let start_byte = chars[*pos].0;
+    *pos += 1;
+    while *pos < chars.len() {
+        match chars[*pos].1 {
+            '"' => {
+                *pos += 1;
+                let end_byte = if *pos < chars.len() {
+                    chars[*pos].0
+                } else {
+                    input.len()
+                };
+                return Some(input[start_byte..end_byte].to_string());
+            }
+            '\\' => {
+                *pos += 1;
+                if *pos >= chars.len() {
+                    return None;
+                }
+                *pos += 1;
+            }
+            _ => {
+                *pos += 1;
+            }
+        }
+    }
+    None
+}
+
+fn parse_bare_arg(input: &str, chars: &[(usize, char)], pos: &mut usize) -> Option<String> {
+    let start = *pos;
+    while *pos < chars.len() {
+        match chars[*pos].1 {
+            ',' | ')' => break,
+            c if c.is_whitespace() => break,
+            _ => *pos += 1,
+        }
+    }
+    if start == *pos {
+        return None;
+    }
+    let slice = slice_from(input, chars, start, *pos).trim().to_string();
+    if slice.is_empty() {
+        None
+    } else {
+        Some(slice)
+    }
+}
+
+fn slice_from<'a>(input: &'a str, chars: &[(usize, char)], start: usize, end: usize) -> &'a str {
+    let start_byte = chars[start].0;
+    let end_byte = if end < chars.len() { chars[end].0 } else { input.len() };
+    &input[start_byte..end_byte]
 }
 
 fn handle_meta(_song: &mut Song, meta: &str) -> Result<Output> {
@@ -760,5 +935,40 @@ mod tests {
         handle_line(&mut song, "clear").expect("clear");
         // Height should be reset so next render starts fresh
         if let Ok(h) = LAST_HEIGHT.lock() { assert_eq!(*h, 0); }
+    }
+
+    #[test]
+    fn paren_syntax_executes_single_command() {
+        let mut song = Song::default();
+        let output = handle_line(&mut song, "track(\"Kick\")").expect("track");
+
+        assert_eq!(song.tracks.len(), 1);
+        assert_eq!(song.tracks[0].name, "Kick");
+        if let Output::Text(t) = output {
+            assert!(t.contains("Kick"));
+        } else { panic!("expected text output"); }
+    }
+
+    #[test]
+    fn chaining_executes_commands_in_order() {
+        let mut song = Song::default();
+        let output = handle_line(
+            &mut song,
+            "track(\"Kick\").sample(1, \"samples/909/kick.wav\").pattern(1, \"x...\")",
+        )
+        .expect("chain executes");
+
+        assert_eq!(song.tracks.len(), 1);
+        assert_eq!(song.tracks[0].name, "Kick");
+        assert_eq!(song.tracks[0].sample.as_deref(), Some("samples/909/kick.wav"));
+        match &song.tracks[0].pattern {
+            Some(Pattern::Visual(pat)) => assert_eq!(pat, "x..."),
+            other => panic!("unexpected pattern state: {:?}", other),
+        }
+
+        if let Output::Text(t) = output {
+            assert!(t.contains("pattern set"));
+            assert!(t.contains("sample set"));
+        } else { panic!("expected text output"); }
     }
 }

@@ -33,3 +33,10 @@ Notes
 - Paths may contain spaces; wrap in quotes.
 - Visual patterns ignore whitespace; use spaces to group beats.
 - If any track is solo, all non‑solo tracks are muted.
+
+## Chaining and Parentheses Syntax
+
+- Any command can be written in a call-style form using parentheses: `track("Kick")`, `gain(1, -3.0)`.
+- Chain multiple commands with dots to perform sequential actions in one line. Example:
+  - `track("Kick").sample(1, "samples/909/kick.wav").pattern(1, "x... x... x... x...")`
+- Output from each chained command is combined in the order executed.
