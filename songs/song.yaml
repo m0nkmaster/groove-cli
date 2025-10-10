@@ -22,7 +22,7 @@ tracks:
     time: 1/4
     feedback: 0.35
     mix: 0.25
-  pattern: !Visual ..x...x.
+  pattern: !Visual (.x..)*3.xx.
   mute: false
   solo: false
   gain_db: 0.0
@@ -35,7 +35,7 @@ tracks:
     feedback: 0.25
     mix: 0.2
   pattern: !Visual ..x.
-  mute: false
+  mute: true
   solo: false
   gain_db: -10.0
   div: 4
@@ -46,7 +46,7 @@ tracks:
     time: 1/8
     feedback: 0.2
     mix: 0.15
-  pattern: !Visual x
+  pattern: !Visual x.
   mute: false
   solo: false
   gain_db: -6.0
@@ -59,7 +59,7 @@ tracks:
     feedback: 0.2
     mix: 0.15
   pattern: !Visual x...
-  mute: true
+  mute: false
   solo: false
   gain_db: -3.0
   div: 4
