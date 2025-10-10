@@ -325,6 +325,14 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
                 removed.name
             )))
         }
+        "clear" => {
+            // Clear live region state so next refresh starts from a clean slate
+            if let Ok(mut h) = LAST_HEIGHT.lock() { *h = 0; }
+            if let Ok(mut g) = LAST_TOKENS.lock() { *g = None; }
+            // Emit ANSI clear screen + home
+            print_external("\x1b[2J\x1b[H".into());
+            Ok(Output::None)
+        }
         _ => bail!("unknown command. Try :help"),
     }
 }
@@ -392,6 +400,7 @@ const HELP: &str = r#"Commands:
   remove <idx>          Remove a track
   list                  List tracks
   play | stop           Start/stop playback
+  clear                 Clear the terminal (like shell 'clear')
   save "song.yaml"      Save current song to YAML
   open "song.yaml"      Open a song from YAML
 "#;
@@ -738,5 +747,16 @@ mod tests {
         assert!(out.contains("2 B"));
         // Has green highlight sequences
         assert!(out.contains("\x1b[32m"));
+    }
+
+    #[test]
+    fn clear_command_resets_live_region_height() {
+        // Pretend something was rendered previously
+        if let Ok(mut h) = LAST_HEIGHT.lock() { *h = 5; }
+        let mut song = Song::default();
+        // Should not error
+        handle_line(&mut song, "clear").expect("clear");
+        // Height should be reset so next render starts fresh
+        if let Ok(h) = LAST_HEIGHT.lock() { assert_eq!(*h, 0); }
     }
 }
