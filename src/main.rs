@@ -1,6 +1,7 @@
 mod model;
 mod repl;
 mod storage;
+mod pattern;
 mod audio;
 
 use anyhow::Result;

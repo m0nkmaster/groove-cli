@@ -62,13 +62,13 @@ pub struct CycleCondition {
     pub of: u32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Nudge {
     Millis(f32),
     Percent(f32),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Gate {
     Fraction { numerator: u32, denominator: u32 },
     Percent(f32),
@@ -126,6 +126,12 @@ impl<'a> Parser<'a> {
                 }
                 Some('_') => {
                     self.bump();
+                    if let Some(last) = steps.last_mut() {
+                        if matches!(last, Step::Rest) {
+                            *last = Step::Tie;
+                            continue;
+                        }
+                    }
                     steps.push(Step::Tie);
                 }
                 Some('(') => {
@@ -169,6 +175,12 @@ impl<'a> Parser<'a> {
                 }
                 Some('_') => {
                     self.bump();
+                    if let Some(last) = steps.last_mut() {
+                        if matches!(last, Step::Rest) {
+                            *last = Step::Tie;
+                            continue;
+                        }
+                    }
                     steps.push(Step::Tie);
                 }
                 Some('(') => {
