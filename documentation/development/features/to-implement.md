@@ -3,10 +3,10 @@
 1.  Duplicate track
 2.  Color
 3.  Simpler naming - double quotes not required, file extension not required, assumes correct folders
-4.  Chaining syntax - track(1).color(blue).sample(kick).delay(3).solo(1).play
+4.  Chaining syntax - track(1).color(blue).sample(kick).delay(3).solo(1).play (baseline chaining parser implemented; add higher-level helpers like color)
 5.  Variations to tracks
 6.  Better UI/UX for error messages
-7.  Chaining commands
+7.  Advanced chaining helpers (conditional logic, macros once baseline chaining is stable)
 8.  Autocomplete for sample selection
 9.  Balance controls
 10. Lots of 'effects/modifiers' per track (delay, reverb, flange...)

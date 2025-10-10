@@ -25,6 +25,10 @@ CLI GROOVEBOX REPL — bpm: 120 steps: 16 swing: 0% repeat:on (type :help)
 3) Set a pattern (x = hit, . = rest):
 - `pattern 1 "x... x... x... x..."`
 
+*Tip:* You can combine these three steps on one line with command chaining:
+
+- `track("Kick").sample(1, "samples/kits/harsh 909/Kick Short.wav").pattern(1, "x... x... x... x...")`
+
 4) Tempo and transport:
 - `bpm 120`
 - `play`
