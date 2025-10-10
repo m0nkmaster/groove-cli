@@ -17,4 +17,4 @@
 15. Performance commands (quick variation switch, hi-pass, stutter)
 16. Change at end of 'bar'
 17. View tracks playing (expand list?) Only list specific tracks `list 1 2 3` for example or `list(1,2,3)` in chaining syntax
-18. Basic logic (only in chaining) - e.g. if(1, playhead = 1).pattern(1, "x...").then.pattern(1, "xxxx").then(stop)
+18. Basic logic (only in chaining) - e.g. if(1, playhead = 1).pattern(1, "x...").then.pattern(1, "xxxx").wait(4,stop)

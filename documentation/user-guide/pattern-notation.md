@@ -78,7 +78,8 @@ Attach bracketed key/value pairs to a hit to override track parameters on that e
 
 ## Escaping and embedding
 
-- REPL: wrap patterns in double quotes: `pattern 1 "x... x... x... x..."` [✓]
+- REPL: standard: wrap patterns in double quotes: `pattern 1 "x... x... x... x..."` [✓]
+- REPL: chaining:  `pattern("x... x... x... x...")`[▲]
 - YAML (current sample): `pattern: !Visual x...` [✓]
 
 ## Grammar (EBNF‑style)
