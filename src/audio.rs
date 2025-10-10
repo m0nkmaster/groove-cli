@@ -8,6 +8,7 @@ use once_cell::sync::OnceCell;
 use rodio::{Decoder, OutputStream, Sink, Source};
 
 use crate::model::song::Song;
+use crate::pattern::visual::{parse_visual_pattern, Step};
 
 static PLAYING: AtomicBool = AtomicBool::new(false);
 
@@ -207,12 +208,19 @@ struct LoadedTrack {
 }
 
 fn visual_to_tokens(s: &str) -> Vec<bool> {
-    let tokens: Vec<bool> = s
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .map(|c| matches!(c, 'x' | 'X' | '1' | '*'))
-        .collect();
-    tokens
+    match parse_visual_pattern(s) {
+        Ok(steps) => steps
+            .into_iter()
+            .map(|step| matches!(step, Step::Hit(_) | Step::Chord(_)))
+            .collect(),
+        Err(err) => {
+            eprintln!("pattern parse error: {err}");
+            s.chars()
+                .filter(|c| !c.is_whitespace())
+                .map(|c| matches!(c, 'x' | 'X' | '1' | '*'))
+                .collect()
+        }
+    }
 }
 
 pub fn reload_song(song: &Song) {
