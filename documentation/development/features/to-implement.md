@@ -10,3 +10,5 @@
 8.  LFOs
 9.  Whole song effects
 10. AI - Of course! Use to create patterns
+11. Performance commands (quick variation switch, hi-pass, stutter)
+12. Change at end of 'bar'
