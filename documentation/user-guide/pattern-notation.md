@@ -114,6 +114,7 @@ ws           := /\s+/
 Notes:
 
 - Unknown modifiers are ignored gracefully to preserve forward compatibility.
+- Patterns are stored unchanged so in live view the pattern shows
 - Float/time parsing supports `1/4`, `3/8`, `250ms`, and percentages for step‑relative durations.
 
 ## Design influences
