@@ -1,0 +1,18 @@
+bpm: 120
+steps: 16
+swing: 0
+repeat: true
+tracks:
+  - name: Sustain
+    sample: samples/synth/C4.wav
+    delay:
+      on: false
+      time: 1/4
+      feedback: 0.0
+      mix: 0.0
+    pattern: !Visual x_______........
+    mute: false
+    solo: false
+    playback: gate
+    gain_db: 0.0
+    div: 4

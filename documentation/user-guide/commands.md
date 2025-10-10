@@ -27,6 +27,7 @@ Tracks
 - `mute <idx> [on|off]` – Toggle or set mute
 - `solo <idx> [on|off]` – Toggle or set solo (solo overrides mutes)
 - `gain <idx> <db>` – Set gain in decibels (e.g., `-3.0`)
+- `playback <idx> <mode>` – Set playback mode (`gate` default, or `mono`/`one_shot`)
 - `div <idx> <tokens_per_beat>` – Set timing division (default 4 → 16th notes)
 
 Notes

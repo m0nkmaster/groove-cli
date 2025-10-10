@@ -1,95 +1,4 @@
-use thiserror::Error;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Step {
-    Rest,
-    Tie,
-    Hit(StepEvent),
-    Chord(Vec<StepEvent>),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct StepEvent {
-    pub note: StepNote,
-    pub ratchet: Option<u32>,
-    pub nudge: Option<Nudge>,
-    pub gate: Option<Gate>,
-}
-
-impl Default for StepEvent {
-    fn default() -> Self {
-        Self {
-            note: StepNote::default(),
-            ratchet: None,
-            nudge: None,
-            gate: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct StepNote {
-    pub pitch_offset: i32,
-    pub velocity: Option<u8>,
-    pub accent: bool,
-    pub probability: Option<f32>,
-    pub cycle: Option<CycleCondition>,
-    pub param_locks: Vec<ParamLock>,
-}
-
-impl Default for StepNote {
-    fn default() -> Self {
-        Self {
-            pitch_offset: 0,
-            velocity: None,
-            accent: false,
-            probability: None,
-            cycle: None,
-            param_locks: Vec::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ParamLock {
-    pub key: String,
-    pub value: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct CycleCondition {
-    pub hit: u32,
-    pub of: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Nudge {
-    Millis(f32),
-    Percent(f32),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Gate {
-    Fraction { numerator: u32, denominator: u32 },
-    Percent(f32),
-    Float(f32),
-}
-
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum ParseError {
-    #[error("unexpected end of input")]
-    UnexpectedEnd,
-    #[error("unexpected character '{found}' at position {position}")]
-    UnexpectedChar { position: usize, found: char },
-    #[error("expected number at position {position}")]
-    ExpectedNumber { position: usize },
-    #[error("invalid number at position {position}")]
-    InvalidNumber { position: usize },
-    #[error("invalid chord contents at position {position}")]
-    InvalidChord { position: usize },
-    #[error("repeat count must be positive at position {position}")]
-    InvalidRepeat { position: usize },
-}
+use super::types::{CycleCondition, Gate, Nudge, ParamLock, ParseError, Step, StepEvent};
 
 pub fn parse_visual_pattern(src: &str) -> Result<Vec<Step>, ParseError> {
     Parser::new(src).parse_pattern()
@@ -126,13 +35,7 @@ impl<'a> Parser<'a> {
                 }
                 Some('_') => {
                     self.bump();
-                    if let Some(last) = steps.last_mut() {
-                        if matches!(last, Step::Rest) {
-                            *last = Step::Tie;
-                            continue;
-                        }
-                    }
-                    steps.push(Step::Tie);
+                    self.push_tie(&mut steps);
                 }
                 Some('(') => {
                     let mut group = self.parse_parenthetical()?;
@@ -175,13 +78,7 @@ impl<'a> Parser<'a> {
                 }
                 Some('_') => {
                     self.bump();
-                    if let Some(last) = steps.last_mut() {
-                        if matches!(last, Step::Rest) {
-                            *last = Step::Tie;
-                            continue;
-                        }
-                    }
-                    steps.push(Step::Tie);
+                    self.push_tie(&mut steps);
                 }
                 Some('(') => {
                     let mut group = self.parse_parenthetical()?;
@@ -206,6 +103,16 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(steps)
+    }
+
+    fn push_tie(&self, steps: &mut Vec<Step>) {
+        if let Some(last) = steps.last_mut() {
+            if matches!(last, Step::Rest) {
+                *last = Step::Tie;
+                return;
+            }
+        }
+        steps.push(Step::Tie);
     }
 
     fn parse_parenthetical(&mut self) -> Result<Vec<Step>, ParseError> {
@@ -370,9 +277,9 @@ impl<'a> Parser<'a> {
             let base_offset = base.note.pitch_offset;
             let mut events = Vec::new();
             for offset in unique_offsets {
-                let mut event = base.clone();
-                event.note.pitch_offset = base_offset + offset;
-                events.push(event);
+                let mut ev = base.clone();
+                ev.note.pitch_offset = base_offset + offset;
+                events.push(ev);
             }
             Ok(Step::Chord(events))
         } else {
@@ -427,63 +334,74 @@ impl<'a> Parser<'a> {
 
     fn parse_gate(&mut self) -> Result<Gate, ParseError> {
         let start = self.pos;
-        let digits = self.take_digits();
-        if digits.is_empty() {
-            // Maybe a float starting with '.'
-            if matches!(self.peek(), Some('.')) {
-                self.bump();
-                let frac_digits = self.take_digits();
-                if frac_digits.is_empty() {
-                    return Err(ParseError::ExpectedNumber { position: start });
-                }
-                let value_str = format!("0.{}", frac_digits);
-                let value: f32 = value_str
-                    .parse()
-                    .map_err(|_| ParseError::InvalidNumber { position: start })?;
-                return Ok(Gate::Float(value));
-            }
+        if matches!(self.peek(), Some('%')) {
+            self.bump();
+            return Err(ParseError::UnexpectedChar { position: start, found: '%' });
+        }
+        let number = self.take_number();
+        if number.is_empty() {
             return Err(ParseError::ExpectedNumber { position: start });
         }
-        if matches!(self.peek(), Some('/')) {
-            self.bump();
-            let denom_start = self.pos;
-            let denom_digits = self.take_digits();
-            if denom_digits.is_empty() {
-                return Err(ParseError::ExpectedNumber {
-                    position: denom_start,
-                });
+        let value: f32 = number
+            .parse()
+            .map_err(|_| ParseError::InvalidNumber { position: start })?;
+        match self.peek() {
+            Some('/') => {
+                self.bump();
+                let denom_start = self.pos;
+                let denom_digits = self.take_digits();
+                if denom_digits.is_empty() {
+                    return Err(ParseError::ExpectedNumber { position: denom_start });
+                }
+                let numerator: u32 = value as u32;
+                let denominator: u32 = denom_digits
+                    .parse()
+                    .map_err(|_| ParseError::InvalidNumber { position: denom_start })?;
+                Ok(Gate::Fraction { numerator, denominator })
             }
-            let numerator: u32 = digits
-                .parse()
-                .map_err(|_| ParseError::InvalidNumber { position: start })?;
-            let denominator: u32 = denom_digits
-                .parse()
-                .map_err(|_| ParseError::InvalidNumber {
-                    position: denom_start,
-                })?;
-            Ok(Gate::Fraction {
-                numerator,
-                denominator,
-            })
+            Some('%') => {
+                self.bump();
+                Ok(Gate::Percent(value))
+            }
+            _ => Ok(Gate::Float(value)),
+        }
+    }
+
+    fn parse_nudge(&mut self) -> Result<Nudge, ParseError> {
+        let start = self.pos;
+        let sign = match self.peek() {
+            Some('+') => {
+                self.bump();
+                1.0
+            }
+            Some('-') => {
+                self.bump();
+                -1.0
+            }
+            _ => 1.0,
+        };
+        let number_start = self.pos;
+        let number_str = self.take_number();
+        if number_str.is_empty() {
+            return Err(ParseError::ExpectedNumber {
+                position: number_start,
+            });
+        }
+        let mut value: f32 = number_str.parse().map_err(|_| ParseError::InvalidNumber {
+            position: number_start,
+        })?;
+        value *= sign;
+        if self.src[self.pos..].starts_with("ms") {
+            self.pos += 2;
+            Ok(Nudge::Millis(value))
         } else if matches!(self.peek(), Some('%')) {
             self.bump();
-            let numerator: f32 = digits
-                .parse()
-                .map_err(|_| ParseError::InvalidNumber { position: start })?;
-            Ok(Gate::Percent(numerator / 100.0))
-        } else if matches!(self.peek(), Some('.')) {
-            self.bump();
-            let frac_digits = self.take_digits();
-            let value_str = format!("{}.{frac}", digits, frac = frac_digits);
-            let value: f32 = value_str
-                .parse()
-                .map_err(|_| ParseError::InvalidNumber { position: start })?;
-            Ok(Gate::Float(value))
+            Ok(Nudge::Percent(value))
         } else {
-            let numerator: f32 = digits
-                .parse()
-                .map_err(|_| ParseError::InvalidNumber { position: start })?;
-            Ok(Gate::Float(numerator))
+            Err(ParseError::UnexpectedChar {
+                position: start,
+                found: self.peek().unwrap_or('\0'),
+            })
         }
     }
 
@@ -492,35 +410,28 @@ impl<'a> Parser<'a> {
         let mut locks = Vec::new();
         loop {
             self.skip_ws_and_comments();
-            if matches!(self.peek(), Some(']')) {
-                self.bump();
-                break;
-            }
             let key_start = self.pos;
             while let Some(c) = self.peek() {
-                if matches!(c, '=' | ',' | ']') {
-                    break;
-                }
-                if c == '\n' {
+                if c == '=' || c == ',' || c == ']' || c == '#' || c.is_whitespace() {
                     break;
                 }
                 self.bump();
             }
-            let key_raw = self.src[key_start..self.pos].trim();
-            if key_raw.is_empty() {
+            if self.pos == key_start {
                 return Err(ParseError::UnexpectedChar {
-                    position: key_start,
-                    found: ']',
+                    position: self.pos,
+                    found: self.peek().unwrap_or('\0'),
                 });
             }
-            let mut value: Option<String> = None;
+            let key_raw = &self.src[key_start..self.pos];
             self.skip_ws_and_comments();
+            let mut value = None;
             if matches!(self.peek(), Some('=')) {
                 self.bump();
                 self.skip_ws_and_comments();
                 let value_start = self.pos;
                 while let Some(c) = self.peek() {
-                    if matches!(c, ',' | ']') {
+                    if c == ',' || c == ']' || c == '#' {
                         break;
                     }
                     self.bump();
@@ -593,44 +504,6 @@ impl<'a> Parser<'a> {
                 position: denom_start,
             })?;
         Ok(Some(CycleCondition { hit, of }))
-    }
-
-    fn parse_nudge(&mut self) -> Result<Nudge, ParseError> {
-        let start = self.pos;
-        let sign = match self.peek() {
-            Some('+') => {
-                self.bump();
-                1.0
-            }
-            Some('-') => {
-                self.bump();
-                -1.0
-            }
-            _ => 1.0,
-        };
-        let number_start = self.pos;
-        let number_str = self.take_number();
-        if number_str.is_empty() {
-            return Err(ParseError::ExpectedNumber {
-                position: number_start,
-            });
-        }
-        let mut value: f32 = number_str.parse().map_err(|_| ParseError::InvalidNumber {
-            position: number_start,
-        })?;
-        value *= sign;
-        if self.src[self.pos..].starts_with("ms") {
-            self.pos += 2;
-            Ok(Nudge::Millis(value))
-        } else if matches!(self.peek(), Some('%')) {
-            self.bump();
-            Ok(Nudge::Percent(value))
-        } else {
-            Err(ParseError::UnexpectedChar {
-                position: start,
-                found: self.peek().unwrap_or('\0'),
-            })
-        }
     }
 
     fn take_digits(&mut self) -> &'a str {

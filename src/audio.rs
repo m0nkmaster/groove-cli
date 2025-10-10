@@ -8,7 +8,14 @@ use once_cell::sync::OnceCell;
 use rodio::{Decoder, OutputStream, Sink, Source};
 
 use crate::model::song::Song;
-use crate::pattern::visual::{parse_visual_pattern, Step};
+use crate::model::track::TrackPlayback;
+use crate::pattern::visual::Gate;
+
+pub mod timing;
+pub mod compile;
+
+use compile::{visual_to_tokens_and_pitches, CompiledPattern};
+use timing::{base_step_period, gate_duration, pitch_semitones_to_speed, step_period_with_swing};
 
 static PLAYING: AtomicBool = AtomicBool::new(false);
 
@@ -99,7 +106,6 @@ pub fn play_song(song: &Song) -> Result<()> {
                 .fold(0.0, f64::max);
             Some(start + Duration::from_secs_f64(max_secs))
         };
-        let mut voices: Vec<Sink> = Vec::new();
         // mark playing on entry
         PLAYING.store(true, Ordering::SeqCst);
         'outer: loop {
@@ -107,11 +113,16 @@ pub fn play_song(song: &Song) -> Result<()> {
             while let Ok(msg) = rx.try_recv() {
                 match msg {
                     ControlMsg::Stop => {
-                        for s in voices.drain(..) { s.stop(); }
+                        for track in &mut rt {
+                            stop_track_voices(track);
+                        }
                         break 'outer;
                     }
                     ControlMsg::Update(new_cfg) => {
                         let now_u = Instant::now();
+                        for track in &mut rt {
+                            stop_track_voices(track);
+                        }
                         rt = merge_runtime_preserving_phase(&current, &new_cfg, &rt, now_u);
                         current = new_cfg;
                         // reset end deadline based on new config
@@ -134,44 +145,95 @@ pub fn play_song(song: &Song) -> Result<()> {
 
             // Fire any due tokens per track; advance their schedules
             for tr in &mut rt {
+                service_track_voices(tr, now);
                 while now >= tr.next_time {
                     if !tr.pattern.is_empty() {
                         let idx = tr.token_index % tr.pattern.len();
                         let hit = tr.pattern[idx];
                         if hit && !tr.muted {
+                            if should_stop_current(tr.playback) {
+                                stop_track_voices(tr);
+                            }
                             let cursor = Cursor::new(tr.data.clone());
                             let reader = BufReader::new(cursor);
                             let source = match Decoder::new(reader) {
-                                Ok(s) => s.amplify(tr.gain),
+                                Ok(s) => {
+                                    let speed = tr
+                                        .pitches
+                                        .get(idx)
+                                        .and_then(|p| *p)
+                                        .map(pitch_semitones_to_speed)
+                                        .unwrap_or(1.0);
+                                    s.speed(speed).amplify(tr.gain)
+                                },
                                 Err(e) => { eprintln!("audio decode error: {}", e); break; }
                             };
+                            let hold_steps = tr
+                                .gate_steps
+                                .get(idx)
+                                .copied()
+                                .unwrap_or(1)
+                                .max(1);
+                            let gate = tr
+                                .gates
+                                .get(idx)
+                                .copied()
+                                .flatten();
                             match Sink::try_new(&stream_handle) {
-                                Ok(sink) => { sink.append(source); sink.play(); voices.push(sink); }
+                                Ok(sink) => {
+                                    let start_instant = Instant::now();
+                                    sink.append(source);
+                                    sink.play();
+                                    let stop_at = gate_stop_deadline(
+                                        tr.playback,
+                                        start_instant,
+                                        tr.base_period,
+                                        hold_steps,
+                                        gate,
+                                    );
+                                    tr.voices.push(VoiceHandle { sink, stop_at });
+                                }
                                 Err(e) => eprintln!("audio error: {}", e),
                             }
                         }
                         tr.token_index = (tr.token_index + 1) % tr.pattern.len();
                     }
                     // Advance by swing-adjusted step duration
-                    let step = step_period_with_swing(current.bpm, tr.div, current.swing, tr.token_index.saturating_sub(1));
+                    let step = step_period_with_swing(
+                        current.bpm,
+                        tr.div,
+                        current.swing,
+                        tr.token_index.saturating_sub(1),
+                    );
                     tr.next_time += step;
                 }
             }
-
-            // Clean up finished voices
-            voices.retain(|s| !s.empty());
+            let after_triggers = Instant::now();
+            for tr in &mut rt {
+                service_track_voices(tr, after_triggers);
+            }
 
             // Update live snapshot for REPL display
             update_live_snapshot(&current, &rt);
 
             // Sleep until the next nearest event to reduce CPU
-            let next_due = rt.iter().map(|t| t.next_time).min().unwrap_or(now + Duration::from_millis(10));
+            let next_step_due = rt.iter().map(|t| t.next_time).min();
+            let next_voice_due = earliest_voice_deadline(&rt);
+            let next_due = match (next_step_due, next_voice_due) {
+                (Some(step), Some(voice)) => if step <= voice { step } else { voice },
+                (Some(step), None) => step,
+                (None, Some(voice)) => voice,
+                (None, None) => now + Duration::from_millis(10),
+            };
             let wait = if next_due > now { next_due - now } else { Duration::from_millis(1) };
             // Limit max wait to be responsive to updates
             let wait = wait.min(Duration::from_millis(25));
             std::thread::sleep(wait);
         }
         // ensure flag reset on thread exit
+        for tr in &mut rt {
+            stop_track_voices(tr);
+        }
         PLAYING.store(false, Ordering::SeqCst);
         // Clear live snapshot on exit
         if let Ok(mut guard) = live_state_cell().lock() { *guard = None; }
@@ -203,25 +265,17 @@ struct LoadedTrack {
     data: Vec<u8>,
     gain: f32,
     pattern: Vec<bool>,
+    pitches: Vec<Option<i32>>, // semitone offsets per step
+    gate_steps: Vec<usize>,
+    gates: Vec<Option<Gate>>,
     div: u32,
     muted: bool,
+    playback: TrackPlayback,
 }
 
-fn visual_to_tokens(s: &str) -> Vec<bool> {
-    match parse_visual_pattern(s) {
-        Ok(steps) => steps
-            .into_iter()
-            .map(|step| matches!(step, Step::Hit(_) | Step::Chord(_)))
-            .collect(),
-        Err(err) => {
-            eprintln!("pattern parse error: {err}");
-            s.chars()
-                .filter(|c| !c.is_whitespace())
-                .map(|c| matches!(c, 'x' | 'X' | '1' | '*'))
-                .collect()
-        }
-    }
-}
+// moved to audio::compile
+
+// helpers moved to audio::{compile,timing}
 
 pub fn reload_song(song: &Song) {
     let cfg = build_config(song);
@@ -244,18 +298,22 @@ fn build_config(song: &Song) -> SequencerConfig {
                 continue;
             }
         };
-        let pattern = match &t.pattern {
-            Some(crate::model::pattern::Pattern::Visual(s)) => visual_to_tokens(s),
-            None => Vec::new(),
+        let compiled = match &t.pattern {
+            Some(crate::model::pattern::Pattern::Visual(s)) => visual_to_tokens_and_pitches(s),
+            None => CompiledPattern::empty(),
         };
         let muted = if any_solo { !t.solo } else { t.mute };
         tracks.push(LoadedTrack {
             name: t.name.clone(),
             data: bytes,
             gain: db_to_amplitude(t.gain_db),
-            pattern,
+            pattern: compiled.triggers,
+            pitches: compiled.pitches,
+            gate_steps: compiled.hold_steps,
+            gates: compiled.gates,
             div: t.div.max(1),
             muted,
+            playback: t.playback,
         });
     }
     SequencerConfig { bpm: song.bpm, swing: song.swing, repeat: song.repeat_on(), tracks }
@@ -270,11 +328,73 @@ struct TrackRuntime {
     data: Vec<u8>,
     gain: f32,
     pattern: Vec<bool>,
+    pitches: Vec<Option<i32>>,
+    gate_steps: Vec<usize>,
+    gates: Vec<Option<Gate>>,
     base_period: Duration,
     next_time: Instant,
     token_index: usize,
     muted: bool,
     div: u32,
+    playback: TrackPlayback,
+    voices: Vec<VoiceHandle>,
+}
+
+struct VoiceHandle {
+    sink: Sink,
+    stop_at: Option<Instant>,
+}
+
+fn service_track_voices(track: &mut TrackRuntime, now: Instant) {
+    for voice in track.voices.iter_mut() {
+        if let Some(deadline) = voice.stop_at {
+            if now >= deadline {
+                voice.sink.stop();
+                voice.stop_at = None;
+            }
+        }
+    }
+    track.voices.retain(|voice| !voice.sink.empty());
+}
+
+fn stop_track_voices(track: &mut TrackRuntime) {
+    for voice in track.voices.drain(..) {
+        voice.sink.stop();
+    }
+}
+
+fn should_stop_current(playback: TrackPlayback) -> bool {
+    matches!(playback, TrackPlayback::Mono)
+}
+
+fn gate_stop_deadline(
+    playback: TrackPlayback,
+    start: Instant,
+    base_step: Duration,
+    hold_steps: usize,
+    gate: Option<Gate>,
+) -> Option<Instant> {
+    if !matches!(playback, TrackPlayback::Gate) {
+        return None;
+    }
+    let steps = hold_steps.max(1);
+    let first = gate
+        .map(|g| gate_duration(base_step, g))
+        .unwrap_or(base_step);
+    let remaining_steps = steps.saturating_sub(1) as f64;
+    let rest = if remaining_steps > 0.0 {
+        Duration::from_secs_f64(base_step.as_secs_f64() * remaining_steps)
+    } else {
+        Duration::from_secs(0)
+    };
+    Some(start + first + rest)
+}
+
+fn earliest_voice_deadline(tracks: &[TrackRuntime]) -> Option<Instant> {
+    tracks
+        .iter()
+        .flat_map(|track| track.voices.iter().filter_map(|voice| voice.stop_at))
+        .min()
 }
 
 fn build_runtime(cfg: &SequencerConfig) -> Vec<TrackRuntime> {
@@ -285,11 +405,16 @@ fn build_runtime(cfg: &SequencerConfig) -> Vec<TrackRuntime> {
             data: t.data.clone(),
             gain: t.gain,
             pattern: t.pattern.clone(),
+            pitches: t.pitches.clone(),
+            gate_steps: t.gate_steps.clone(),
+            gates: t.gates.clone(),
             base_period: base_step_period(cfg.bpm, t.div),
             next_time: now,
             token_index: 0,
             muted: t.muted,
             div: t.div,
+            playback: t.playback,
+            voices: Vec::new(),
         })
         .collect()
 }
@@ -331,11 +456,16 @@ fn merge_runtime_preserving_phase(
                 data: t.data.clone(),
                 gain: t.gain,
                 pattern: t.pattern.clone(),
+                pitches: t.pitches.clone(),
+                gate_steps: t.gate_steps.clone(),
+                gates: t.gates.clone(),
                 base_period: new_period,
                 next_time: new_next,
                 token_index: new_token_index,
                 muted: t.muted,
                 div: t.div,
+                playback: t.playback,
+                voices: Vec::new(),
             });
         } else {
             // New track: schedule from next token boundary
@@ -343,11 +473,16 @@ fn merge_runtime_preserving_phase(
                 data: t.data.clone(),
                 gain: t.gain,
                 pattern: t.pattern.clone(),
+                pitches: t.pitches.clone(),
+                gate_steps: t.gate_steps.clone(),
+                gates: t.gates.clone(),
                 base_period: new_period,
                 next_time: now + new_period,
                 token_index: 0,
                 muted: t.muted,
                 div: t.div,
+                playback: t.playback,
+                voices: Vec::new(),
             });
         }
     }
@@ -369,26 +504,7 @@ fn time_until_next(now: Instant, next_time: Instant, period: Duration) -> Durati
 }
 
 // --- Swing helpers (pure, testable) ---
-fn base_step_period(bpm: u32, div: u32) -> Duration {
-    Duration::from_secs_f64(60.0 / bpm as f64 / div.max(1) as f64)
-}
-
-fn swing_fraction(swing_percent: u8) -> f64 {
-    // Map 0..100 → 0.0..0.5 (0% no swing; 100% extreme 50/150 split)
-    (swing_percent as f64 / 100.0).min(1.0) * 0.5
-}
-
-fn step_period_with_swing(bpm: u32, div: u32, swing_percent: u8, token_index: usize) -> Duration {
-    let base = base_step_period(bpm, div);
-    if swing_percent == 0 || div == 0 {
-        return base;
-    }
-    // Apply swing as alternating long/short steps. Use even/odd token index.
-    let f = swing_fraction(swing_percent);
-    let base_sec = base.as_secs_f64();
-    let factor = if token_index.is_multiple_of(2) { 1.0 + f } else { 1.0 - f };
-    Duration::from_secs_f64(base_sec * factor)
-}
+// moved to audio::timing
 
 fn update_live_snapshot(cfg: &SequencerConfig, rt: &[TrackRuntime]) {
     let mut tracks = Vec::with_capacity(cfg.tracks.len());
@@ -408,52 +524,6 @@ fn update_live_snapshot(cfg: &SequencerConfig, rt: &[TrackRuntime]) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{db_to_amplitude, base_step_period, step_period_with_swing};
-
-    #[test]
-    fn db_to_amplitude_converts_expected_values() {
-        assert!((db_to_amplitude(0.0) - 1.0).abs() < 1e-6);
-        assert!(db_to_amplitude(-6.0) < 0.6);
-        assert!(db_to_amplitude(6.0) > 1.9);
-    }
-
-    #[test]
-    fn step_period_no_swing_equals_base() {
-        let base = base_step_period(120, 4).as_secs_f64();
-        let p0 = step_period_with_swing(120, 4, 0, 0).as_secs_f64();
-        let p1 = step_period_with_swing(120, 4, 0, 1).as_secs_f64();
-        assert!((p0 - base).abs() < 1e-9);
-        assert!((p1 - base).abs() < 1e-9);
-    }
-
-    #[test]
-    fn step_period_swing_extremes() {
-        // 120 BPM, div=4 => base = 60/120/4 = 0.125s
-        let base = base_step_period(120, 4).as_secs_f64();
-        assert!((base - 0.125).abs() < 1e-9);
-        // 100% swing => factors 1.5 and 0.5
-        let long = step_period_with_swing(120, 4, 100, 0).as_secs_f64();
-        let short = step_period_with_swing(120, 4, 100, 1).as_secs_f64();
-        assert!((long - base * 1.5).abs() < 1e-9, "long={long}");
-        assert!((short - base * 0.5).abs() < 1e-9, "short={short}");
-        // Sum remains two base steps
-        assert!(((long + short) - (base * 2.0)).abs() < 1e-9);
-    }
-
-    #[test]
-    fn step_period_mid_swing() {
-        let base = base_step_period(100, 4).as_secs_f64();
-        // 50% swing => f=0.25 => 1.25x and 0.75x
-        let long = step_period_with_swing(100, 4, 50, 2).as_secs_f64();
-        let short = step_period_with_swing(100, 4, 50, 3).as_secs_f64();
-        assert!((long - base * 1.25).abs() < 1e-9);
-        assert!((short - base * 0.75).abs() < 1e-9);
-        assert!(((long + short) - (base * 2.0)).abs() < 1e-9);
-    }
-}
-
-#[cfg(test)]
 mod build_config_tests {
     use super::is_muted;
 
@@ -467,5 +537,82 @@ mod build_config_tests {
         assert_eq!(is_muted(true, true, false), true);  // non-solo muted even if muted already
         assert_eq!(is_muted(true, true, true), false);  // solo plays
         assert_eq!(is_muted(true, false, true), false); // solo plays
+    }
+}
+
+#[cfg(test)]
+mod playback_mode_tests {
+    use super::{build_config, gate_stop_deadline, should_stop_current};
+    use crate::model::{
+        pattern::Pattern,
+        song::Song,
+        track::{Track, TrackPlayback},
+    };
+    use crate::pattern::visual::Gate;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn mono_mode_stops_current_voice() {
+        assert!(should_stop_current(TrackPlayback::Mono));
+    }
+
+    #[test]
+    fn one_shot_mode_allows_layered_voices() {
+        assert!(!should_stop_current(TrackPlayback::OneShot));
+    }
+
+    #[test]
+    fn gate_mode_schedules_stop_for_step_length() {
+        let now = Instant::now();
+        let period = Duration::from_millis(120);
+        let stop = gate_stop_deadline(TrackPlayback::Gate, now, period, 1, None)
+            .expect("gate should schedule stop");
+        assert!(stop >= now + period);
+    }
+
+    #[test]
+    fn gate_mode_respects_ties() {
+        let now = Instant::now();
+        let period = Duration::from_millis(100);
+        let stop = gate_stop_deadline(TrackPlayback::Gate, now, period, 4, None)
+            .expect("gate should schedule stop");
+        let expected = Duration::from_secs_f64(period.as_secs_f64() * 4.0);
+        assert!(stop >= now + expected);
+    }
+
+    #[test]
+    fn gate_mode_respects_gate_fraction() {
+        let now = Instant::now();
+        let period = Duration::from_millis(200);
+        let gate = Gate::Percent(50.0);
+        let stop = gate_stop_deadline(TrackPlayback::Gate, now, period, 3, Some(gate))
+            .expect("gate should schedule stop");
+        let first = super::gate_duration(period, gate);
+        let rest = Duration::from_secs_f64(period.as_secs_f64() * 2.0);
+        assert!(stop >= now + first + rest);
+    }
+
+    #[test]
+    fn non_gate_modes_do_not_schedule_stop() {
+        let now = Instant::now();
+        let period = Duration::from_millis(120);
+        assert!(gate_stop_deadline(TrackPlayback::OneShot, now, period, 1, None).is_none());
+        assert!(gate_stop_deadline(TrackPlayback::Mono, now, period, 1, None).is_none());
+    }
+
+    #[test]
+    fn build_config_preserves_visual_sustain_steps() {
+        let mut song = Song::default();
+        let mut track = Track::new("Synth");
+        track.sample = Some("samples/synth/C4.wav".to_string());
+        track.pattern = Some(Pattern::visual("x_______........"));
+        track.playback = TrackPlayback::Gate;
+        track.div = 4;
+        song.tracks.push(track);
+
+        let cfg = build_config(&song);
+        assert_eq!(cfg.tracks.len(), 1);
+        let sustain = cfg.tracks[0].gate_steps.get(0).copied();
+        assert_eq!(sustain, Some(8));
     }
 }

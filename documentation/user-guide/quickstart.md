@@ -50,3 +50,4 @@ If a `song.yaml` exists in your current directory (or you pass `-o <file>`), the
 - `list` prints your tracks with their settings and patterns.
 - `mute 1` or `solo 1` to focus listening.
 - `gain 1 -3.0` to trim a loud sample.
+- Playback defaults to `gate`; switch to `one_shot` if you want tails to overlap, or `mono` for monophonic voices.

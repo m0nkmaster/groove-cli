@@ -9,7 +9,7 @@ use rustyline::{error::ReadlineError, history::DefaultHistory, Editor, ExternalP
 
 use crate::model::pattern::Pattern;
 use crate::model::song::Song;
-use crate::model::track::Track;
+use crate::model::track::{Track, TrackPlayback};
 use crate::storage::song as song_io;
 
 pub fn run_repl(song: &mut Song) -> Result<()> {
@@ -312,6 +312,23 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
             crate::audio::reload_song(song);
             Ok(Output::Text(msg))
         }
+        "playback" => {
+            let idx = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: playback <track_idx> <mode>"))?;
+            let (display_idx, track) = track_mut(song, &idx)?;
+            let mode_raw = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: playback <track_idx> <mode>"))?;
+            let mode = parse_playback_mode(&mode_raw)?;
+            track.playback = mode;
+            crate::audio::reload_song(song);
+            Ok(Output::Text(format!(
+                "track {} playback {}",
+                display_idx,
+                mode.as_str()
+            )))
+        }
         "div" => {
             let idx = parts
                 .next()
@@ -572,6 +589,7 @@ const HELP: &str = r#"Commands:
   mute <idx> [on|off]   Toggle or set mute state
   solo <idx> [on|off]   Toggle or set solo state
   gain <idx> <db>       Set track gain in decibels
+  playback <idx> <mode> Set track playback (gate|mono|one_shot)
   remove <idx>          Remove a track
   list                  List tracks
   play | stop           Start/stop playback
@@ -603,6 +621,15 @@ fn parse_unit_range(label: &str, raw: &str) -> Result<f32> {
         bail!("{} must be between 0.0 and 1.0", label);
     }
     Ok(value)
+}
+
+fn parse_playback_mode(raw: &str) -> Result<TrackPlayback> {
+    match raw {
+        "one_shot" | "oneshot" | "one-shot" => Ok(TrackPlayback::OneShot),
+        "mono" | "monophonic" | "replace" => Ok(TrackPlayback::Mono),
+        "gate" | "clip" | "hold" => Ok(TrackPlayback::Gate),
+        _ => bail!("playback mode must be gate, mono, or one_shot"),
+    }
 }
 
 // --- Live Playing View Toggle ---
@@ -780,6 +807,7 @@ fn print_live_region(lines: Vec<String>) {
 mod tests {
     use super::*;
     use crate::model::pattern::Pattern;
+    use crate::model::track::TrackPlayback;
     use crate::audio::{LiveSnapshot, LiveTrackSnapshot};
 
     fn song_with_track() -> Song {
@@ -830,6 +858,13 @@ mod tests {
     }
 
     #[test]
+    fn playback_command_sets_mode() {
+        let mut song = song_with_track();
+        handle_line(&mut song, "playback 1 mono").expect("playback set");
+        assert_eq!(song.tracks[0].playback, TrackPlayback::Mono);
+    }
+
+    #[test]
     fn remove_track_by_index() {
         let mut song = Song::default();
         song.tracks.push(Track::new("Kick"));
@@ -859,6 +894,7 @@ mod tests {
         assert!(list.contains("pattern: x..."));
         assert!(list.contains("mute:on"));
         assert!(list.contains("gain:-2.5dB"));
+        assert!(list.contains("playback:gate"));
     }
 
     #[test]

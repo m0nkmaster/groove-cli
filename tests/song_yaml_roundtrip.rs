@@ -1,6 +1,6 @@
 use groove_cli::model::pattern::Pattern;
 use groove_cli::model::song::Song;
-use groove_cli::model::track::Track;
+use groove_cli::model::track::{Track, TrackPlayback};
 
 #[test]
 fn roundtrip_song_yaml() {
@@ -17,3 +17,19 @@ fn roundtrip_song_yaml() {
     assert_eq!(out.tracks[0].name, "Kick");
 }
 
+#[test]
+fn track_playback_defaults_to_gate() {
+    let t = Track::new("Snare");
+    assert_eq!(t.playback, TrackPlayback::Gate);
+}
+
+#[test]
+fn track_playback_roundtrips_through_yaml() {
+    let mut t = Track::new("Hat");
+    t.playback = TrackPlayback::Mono;
+
+    let yaml = serde_yaml::to_string(&t).expect("serialize track");
+    let out: Track = serde_yaml::from_str(&yaml).expect("deserialize track");
+
+    assert_eq!(out.playback, TrackPlayback::Mono);
+}

@@ -1,4 +1,4 @@
-bpm: 69
+bpm: 120
 steps: 16
 swing: 0
 repeat: true
@@ -11,8 +11,9 @@ tracks:
     feedback: 0.35
     mix: 0.25
   pattern: !Visual x...
-  mute: false
+  mute: true
   solo: false
+  playback: one_shot
   gain_db: 0.0
   div: 4
 - name: Snare
@@ -23,8 +24,9 @@ tracks:
     feedback: 0.35
     mix: 0.25
   pattern: !Visual (.x..)*3.xx.
-  mute: false
+  mute: true
   solo: false
+  playback: one_shot
   gain_db: 0.0
   div: 4
 - name: Clap
@@ -37,6 +39,7 @@ tracks:
   pattern: !Visual ..x.
   mute: true
   solo: false
+  playback: one_shot
   gain_db: -10.0
   div: 4
 - name: Hat
@@ -47,8 +50,9 @@ tracks:
     feedback: 0.2
     mix: 0.15
   pattern: !Visual x.
-  mute: false
+  mute: true
   solo: false
+  playback: one_shot
   gain_db: -6.0
   div: 4
 - name: Rim
@@ -59,19 +63,34 @@ tracks:
     feedback: 0.2
     mix: 0.15
   pattern: !Visual x...
-  mute: false
+  mute: true
   solo: false
+  playback: one_shot
   gain_db: -3.0
   div: 4
-- name: samples/synth/C4.wav
+- name: Synth
   sample: samples/synth/C4.wav
   delay:
     on: false
     time: 1/4
     feedback: 0.35
     mix: 0.25
-  pattern: !Visual x+2x+2
+  pattern: !Visual x.. x+7. x+10. x+12.|x+7. x+3. x. x-2.|x-3. x-5. x-3. x-2.|x. x+3. x+5. x+7
   mute: false
   solo: false
+  playback: gate
+  gain_db: 0.0
+  div: 8
+- name: Amen
+  sample: samples/loops/amen-120.mp3
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual x(.)*31
+  mute: false
+  solo: false
+  playback: mono
   gain_db: 0.0
   div: 4
