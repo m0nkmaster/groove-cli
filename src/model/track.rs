@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use super::fx::Delay;
@@ -30,6 +31,12 @@ pub struct Track {
     pub sample: Option<String>,
     pub delay: Delay,
     pub pattern: Option<Pattern>,
+    /// Named pattern variations (e.g., "a", "b", "fill")
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub variations: HashMap<String, Pattern>,
+    /// Current active variation (if any)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_variation: Option<String>,
     pub mute: bool,
     pub solo: bool,
     #[serde(default)]
@@ -46,11 +53,22 @@ impl Track {
             sample: None,
             delay: Delay::default(),
             pattern: None,
+            variations: HashMap::new(),
+            current_variation: None,
             mute: false,
             solo: false,
             playback: TrackPlayback::default(),
             gain_db: 0.0,
             div: default_division(),
+        }
+    }
+    
+    /// Get the currently active pattern (variation or main).
+    pub fn active_pattern(&self) -> Option<&Pattern> {
+        if let Some(ref var_name) = self.current_variation {
+            self.variations.get(var_name)
+        } else {
+            self.pattern.as_ref()
         }
     }
 }

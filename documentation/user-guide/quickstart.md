@@ -1,53 +1,167 @@
-# Quickstart
+# Quickstart Guide
 
-This guide walks you through creating a simple beat with groove-cli.
+Get making beats in minutes with groove-cli.
 
-## Run the REPL
+## Launch the REPL
 
-- `cargo run --` (or run the installed binary `groove-cli`)
-- Optional: `cargo run -- -o songs/song.yaml` to open and watch an existing song.
+```bash
+cargo run --
+# or
+./target/release/groove-cli
+```
 
-You’ll see a prompt:
+Optional: Open an existing song with live reload:
+```bash
+cargo run -- -o songs/song.yaml
+```
 
+You'll see:
 ```
 CLI GROOVEBOX REPL — bpm: 120 steps: 16 swing: 0% repeat:on (type :help)
 >
 ```
 
-## Create Your First Track
+## Create Your First Beat
 
-1) Add a track:
-- `track "Kick"`
+### 1. Add a kick track
 
-2) Pick a sample:
-- `sample 1 "samples/kits/harsh 909/Kick Short.wav"`
+```
+> track "Kick"
+added track Kick
+```
 
-3) Set a pattern (x = hit, . = rest):
-- `pattern 1 "x... x... x... x..."`
+### 2. Load a sample
 
-*Tip:* You can combine these three steps on one line with command chaining:
+```
+> sample 1 "samples/kits/harsh 909/Kick.wav"
+track 1 sample set
+```
 
-- `track("Kick").sample(1, "samples/kits/harsh 909/Kick Short.wav").pattern(1, "x... x... x... x...")`
+💡 **Tip:** Press Tab for sample path autocomplete!
 
-4) Tempo and transport:
-- `bpm 120`
-- `play`
-- `stop`
+### 3. Set a pattern
 
-Optional live view:
-- `:live on` to show a compact status line and a per‑track grid while playing.
-- `clear` to manually clear the live output region if needed.
+```
+> pattern 1 "x... x... x... x..."
+track 1 pattern set
+```
 
-## Save and Open Songs
+Pattern notation: `x` = hit, `.` = rest
 
-- Save to YAML: `save "songs/song.yaml"`
-- Open from YAML: `open "songs/song.yaml"`
+### 4. Play it!
 
-If a `song.yaml` exists in your current directory (or you pass `-o <file>`), the app watches it and live‑reloads on change.
+```
+> play
+```
 
-## Tips
+Enable the live view to see playhead position:
+```
+> :live on
+```
 
-- `list` prints your tracks with their settings and patterns.
-- `mute 1` or `solo 1` to focus listening.
-- `gain 1 -3.0` to trim a loud sample.
-- Playback defaults to `gate`; switch to `one_shot` if you want tails to overlap, or `mono` for monophonic voices.
+### One-liner version
+
+Chain commands for speed:
+```
+> track("Kick").sample(1, "samples/909/kick.wav").pattern(1, "x...x...x...x...")
+```
+
+## Add More Tracks
+
+```
+> track "Snare"
+> sample 2 "samples/kits/harsh 909/Snare.wav"
+> pattern 2 ".... x... .... x..."
+
+> track "HiHat"
+> sample 3 "samples/kits/harsh 909/Closed Hat.wav"
+> pattern 3 "x.x. x.x. x.x. x.x."
+```
+
+## Adjust the Mix
+
+```
+> gain 3 -6.0        # Lower hi-hat volume
+> mute 2             # Mute snare
+> solo 1             # Solo kick only
+```
+
+## Add Some Flavor
+
+### Velocity and accents
+```
+> pattern 3 "xv60 X xv40 x"   # X = accent, v60 = velocity 60
+```
+
+### Probability (generative feel)
+```
+> pattern 3 "x x?50% x x?30%"  # 50% and 30% chance hits
+```
+
+### Ratchets (rolls)
+```
+> pattern 3 "x... x{3}. x... x{2}."  # Rapid sub-hits
+```
+
+### Delay effect
+```
+> delay 3 on
+> delay 3 time 1/8
+> delay 3 feedback 0.3
+> delay 3 mix 0.2
+```
+
+## Generate Patterns with Code
+
+Use Rhai scripts for algorithmic patterns:
+
+```
+> gen 1 `euclid(5, 16)`
+track 1 pattern: x..x.x..x.x..x..
+```
+
+Built-in generators:
+- `euclid(k, n)` — Euclidean rhythms
+- `random(density, seed)` — Random patterns
+- `fill(length)` — Drum fills
+
+## Pattern Variations
+
+Store multiple patterns per track for live switching:
+
+```
+> pattern 1.a "x...x...x...x..."   # main groove
+> pattern 1.b "x.x.x.x.x.x.x.x."   # busy variation
+> var 1 b                          # switch to busy
+> var 1 main                       # back to main
+```
+
+## Save Your Work
+
+```
+> save "songs/my-beat.yaml"
+song saved
+
+> open "songs/my-beat.yaml"
+song loaded
+```
+
+## Useful Commands
+
+| Command | What it does |
+|---------|--------------|
+| `list` | Show all tracks |
+| `bpm 140` | Change tempo |
+| `swing 25` | Add swing feel |
+| `stop` | Stop playback |
+| `:help` | Show all commands |
+| `:live on` | Enable live view |
+| `clear` | Clear terminal |
+
+## Next Steps
+
+- Read the [Command Reference](commands.md) for all options
+- Study [Pattern Notation](pattern-notation.md) for advanced patterns
+- Try the AI generator: `ai "funky breakbeat kick"`
+
+Happy beat making! 🥁

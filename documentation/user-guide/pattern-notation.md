@@ -1,171 +1,226 @@
 # Pattern Notation Guide
 
-This document defines the visual pattern notation for Groove CLI. It covers what works today and the full planned notation so authored patterns remain forward‑compatible. Where useful, it draws on established practice from trackers (Renoise/FT2), Elektron trig conditions, and live‑coding mini‑notations (TidalCycles) while keeping the syntax compact and readable in a REPL.
+This document defines the visual pattern notation for Groove CLI.
 
-Status key:
-
-- [✓] Implemented in current engine
-- [▲] Planned (syntax stable; parsed/ignored today)
-- [⧗] Under consideration (subject to change)
+**Status key:**
+- ✅ Implemented and working
+- 🔜 Parsed but not yet applied in audio
+- 💭 Under consideration
 
 ## Basics
 
-- Steps advance at `track.div` steps per beat; engine tempo is `song.bpm`.
-- A pattern is a string; whitespace is ignored except inside brackets/parentheses.
-- Length equals the count of step tokens (whitespace removed). Patterns loop.
-- Bar separators (`|`) and thin spacing are for readability and are ignored. [▲]
+Patterns are strings where each character represents one step. The sequencer plays at `track.div` steps per beat (default 4 = 16th notes) at `song.bpm` tempo.
 
-Symbols (hits vs rests):
+| Symbol | Description | Status |
+|--------|-------------|--------|
+| `x` | Hit | ✅ |
+| `X` | Accented hit (louder) | ✅ |
+| `.` | Rest/silence | ✅ |
+| `_` | Tie/sustain (extends previous note) | ✅ |
+| `\|` | Bar separator (visual only) | ✅ |
+| `#` | Comment to end of line | ✅ |
 
-- `x` — hit (alias: `X`, `*`, `1`) [✓]
-- `.` — rest/silence [✓]
-- `_` — tie/sustain previous note through this step (no retrigger) [▲]
-
-Examples:
-
-- `x... x... x... x...` — four-on-the-floor [✓]
-- `..x. ..x. ..x. ..x.` — off‑beat snare [✓]
-
-## Per‑step modifiers
-
-Attach modifiers immediately to a hit. Order of modifiers does not matter; use brackets if adding multiple key/value pairs.
-
-- Pitch transpose: `+n` or `-n` semitones, e.g., `x+2`, `x-5` [▲]
-- Probability: `?p` where `p` is `0–1` or `%` form, e.g., `x?0.35`, `x?35%` [▲]
-- Velocity/accent: uppercase `X` for accent; or `vNN` (0–127), e.g., `xv96` [▲]
-- Ratchet (sub‑repeats within the step): `{N}` e.g., `x{3}` = 3 quick retrigs in the step [▲]
-- Micro‑timing nudge: `@±T` e.g., `x@+5ms`, `x@-8%` (ms or percent of step) [▲]
-- Length override (gate/hold): `=T` e.g., `x=3/4` to hold 75% of the step; combines with ties `_` [▲]
-- Humanize (randomize): `~spec` e.g., `x~5ms`, `x~3vel` [⧗]
-
-Multiple modifiers example: `x+7?v50%{2}@-10ms=1/2` [▲]
-
-## Grouping and bars
-
-- Spaces cluster visually; no timing effect. [✓]
-- `|` may separate bars for readability: `x...|x...|x...|x...` [▲]
-- Parentheses group steps for repetition or chords (see below). [▲]
-
-## Repeats and transforms
-
-- Group repeat: `(pattern)*N` duplicates the enclosed steps N times. Example: `(x.)*4` → `x.x.x.x.` [▲]
-- Speed scaling per group: `(pattern)/N` slow; `(pattern)*N!` fast density (Tidal‑style inspiration). Example: `(x.)/2` spans twice the time [⧗]
-
-## Chords and pitched samples
-
-For pitched samples (e.g., a synth note), a single step can trigger multiple transpositions:
-
-- Chord as offsets: `x+(0,4,7)` (unison, +4, +7 semitones) [▲]
-- Inline stacked hits: `(x x+4 x+7)` same step duration, simultaneous [▲]
-
-## Conditional and cycle‑aware hits
-
-Cycle = one full pass of the pattern.
-
-- K of N cycles: `x@1/2` (only on the first of every 2 cycles) [▲]
-- Every Nth occurrence: `x@%4` (on steps where global step index % 4 == 0) [⧗]
-
-## Per‑step parameter locks (FX)
-
-Attach bracketed key/value pairs to a hit to override track parameters on that event.
-
-- Example: `x[delay.time=1/8, delay.mix=0.25]` [▲]
-- Shorthand booleans: `x[delay.on]` or `x[rev.off]` [▲]
-
-## Comments
-
-- Use `#` to comment to end of line in multi‑line patterns (YAML). [▲]
-
-## Escaping and embedding
-
-- REPL: standard: wrap patterns in double quotes: `pattern 1 "x... x... x... x..."` [✓]
-- REPL: chaining:  `pattern("x... x... x... x...")`[✓]
-- YAML (current sample): `pattern: !Visual x...` [✓]
-
-## Grammar (EBNF‑style)
-
-This grammar reflects the planned full notation; the current engine accepts hits/rests and ignores unknown tokens safely.
-
+**Examples:**
 ```
-pattern      := (bar | ws)* (group | step | bar | ws)+
-bar          := '|'
-group        := '(' (group | step)+ ')' group_mod*
-group_mod    := '*' INT            # repeat N times
-              | '/' INT            # stretch duration by N
-step         := rest | note
-rest         := '.' | '_'
-note         := hit modifiers*
-hit          := 'x' | 'X' | '*' | '1'
-modifiers    := pitch | prob | vel | ratchet | nudge | gate | human | chord | plock | cycle
-pitch        := ('+'|'-') INT
-prob         := '?' ( FLOAT | INT '%' )
-vel          := 'v' INT            # 0..127; X implies accent preset
-ratchet      := '{' INT '}'
-nudge        := '@' ('+'|'-')? ( INT 'ms' | INT '%' )
-gate         := '=' ( FRACTION | FLOAT )
-human        := '~' ( INT 'ms' | INT 'vel' )
-chord        := '+(' INT (',' INT)* ')'
-plock        := '[' kv (',' kv)* ']'
-kv           := KEY '=' VALUE      # keys are namespaced like delay.time
-cycle        := '@' INT '/' INT    # K/N cycles
-ws           := /\s+/
+x... x... x... x...     # Four-on-the-floor kick
+..x. ..x. ..x. ..x.     # Backbeat snare
+x.x. x.x. x.x. x.x.     # 8th note hi-hat
 ```
 
-Notes:
+## Per-Step Modifiers
 
-- Unknown modifiers are ignored gracefully to preserve forward compatibility.
-- Patterns are stored unchanged so in live view the pattern shows
-- Float/time parsing supports `1/4`, `3/8`, `250ms`, and percentages for step‑relative durations.
+Attach modifiers directly after a hit. Order doesn't matter.
 
-## Design influences
+### Pitch Transpose ✅
+```
+x+7    # Up 7 semitones
+x-5    # Down 5 semitones
+x+12   # Up one octave
+```
 
-- Trackers (Renoise/FT2): step grids, ties, per‑step parameters.
-- Elektron trig conditions and retrigs: probability, cycle conditions, ratchets.
-- TidalCycles mini‑notation: group repetition and time scaling concepts.
+### Velocity ✅
+```
+xv80   # Velocity 80 (0-127)
+xv127  # Maximum velocity
+X      # Accent (preset loud velocity)
+```
 
-## Capability matrix
+### Probability ✅
+```
+x?50%   # 50% chance to trigger
+x?0.25  # 25% chance (decimal form)
+x?75%   # 75% chance
+```
 
-- Today [v0.x]:
-  - Hits: `x` (aliases `X`, `*`, `1`) [✓]
-  - Rests: `.` [✓]
-  - Whitespace ignored; patterns loop [✓]
+### Ratchets (Sub-Repeats) ✅
+```
+x{2}    # 2 rapid hits within the step
+x{3}    # Triplet roll
+x{4}    # 4 quick hits (32nd notes at div=4)
+```
 
-- Near‑term (parser work):
-  - Pitch `+/-n`, ties `_`, ratchets `{N}`, probability `?p`, velocity `vNN`, bar `|` [▲]
-  - Per‑step FX locks `[key=val,...]`, cycle conditions `@K/N`, nudge `@±T`, gate `=T` [▲]
+### Gate Length ✅
+```
+x=1/2   # Hold for 50% of step duration
+x=3/4   # Hold for 75%
+x=1/4   # Short staccato
+```
 
-- Coded generators (separate feature):
-  - `euclid(k, n)` Euclidean rhythms; returns a sequence of hits with optional accents [▲]
-  - User‑defined functions in an embedded language (see `documentation/features/full-spec.md`). [▲]
+### Micro-timing Nudge 🔜
+```
+x@+5ms   # Trigger 5ms late
+x@-10ms  # Trigger 10ms early
+x@+5%    # Nudge by 5% of step duration
+```
+
+### Cycle Conditions 🔜
+```
+x@1/4   # Only trigger on cycle 1 of every 4
+x@3/4   # Only on cycle 3 of 4
+```
+
+### Per-Step Parameter Locks 🔜
+```
+x[delay.on]              # Enable delay for this hit only
+x[delay.time=1/8]        # Override delay time
+x[delay.mix=0.5]         # Override delay mix
+```
+
+### Combined Modifiers
+```
+x+7?50%v80{2}   # Up 7 semitones, 50% probability, velocity 80, double hit
+X=3/4           # Accented with 75% gate
+```
+
+## Chords ✅
+
+Multiple notes on the same step:
+
+### Inline chord notation
+```
+(x x+4 x+7)     # Major chord (root, major 3rd, 5th)
+(x x+3 x+7)     # Minor chord
+(x x+4 x+7 x+12) # Major with octave
+```
+
+### Shorthand chord offsets
+```
+x+(0,4,7)       # Same as (x x+4 x+7)
+x+(0,3,7)       # Minor chord
+```
+
+Each note in a chord can have its own velocity:
+```
+(xv100 x+4v80 x+7v60)   # Root loudest, decreasing up
+```
+
+## Groups and Repeats ✅
+
+### Repeat groups
+```
+(x.)*4          # Expands to: x.x.x.x.
+(x..)*3         # Expands to: x..x..x..
+(x x+4)*2       # Expands to: x x+4 x x+4
+```
+
+## Ties and Sustain ✅
+
+Use `_` to extend a note through following steps (no retrigger):
+```
+x___....        # Hit on step 1, sustain through steps 2-4
+x_x_x_x_        # Alternating hits with sustain
+```
+
+In `gate` playback mode, ties determine how long the sample plays before being cut.
+
+## Comments ✅
+
+In multi-line patterns (YAML files), use `#` for comments:
+```yaml
+pattern: !Visual |
+  x... x... x... x...  # kick pattern
+  # this line is ignored
+```
+
+## Whitespace
+
+Spaces and tabs are ignored—use them freely for visual grouping:
+```
+x . . . | x . . . | x . . . | x . . .
+```
+
+## Full Grammar (EBNF)
+
+```
+pattern     := (step | group | bar | comment | ws)*
+bar         := '|'
+comment     := '#' [^\n]* '\n'
+group       := '(' (step | group)+ ')' repeat?
+repeat      := '*' INT
+step        := rest | hit modifiers*
+rest        := '.' | '_'
+hit         := 'x' | 'X' | '*' | '1'
+modifiers   := pitch | prob | vel | ratchet | nudge | gate | chord | plock | cycle
+pitch       := ('+' | '-') INT
+prob        := '?' (FLOAT | INT '%')
+vel         := 'v' INT                    # 0-127
+ratchet     := '{' INT '}'
+nudge       := '@' ('+' | '-')? (INT 'ms' | INT '%')
+gate        := '=' (FRACTION | FLOAT)
+chord       := '+(' INT (',' INT)* ')'
+plock       := '[' kv (',' kv)* ']'
+kv          := KEY ('=' VALUE)?
+cycle       := '@' INT '/' INT
+```
 
 ## Examples
 
-- Four bars of kick with snare backbeats:
-  - `x...|x...|x...|x...`
-  - `..x.|..x.|..x.|..x.`
+### Basic drum pattern
+```
+x... x... x... x...     # Kick
+.... x... .... x...     # Snare
+x.x. x.x. x.x. x.x.     # Hi-hat
+```
 
-- Hi‑hat with ratchets and probability accents:
-  - `x{2}. x?30% x{3}. x?20%`
+### Hi-hat with dynamics
+```
+xv60 X xv40 xv60 X xv40 xv60 X
+```
 
-- Pitched synth arpeggio (C, E, G, octave):
-  - `x x+4 x+7 x+12`
+### Generative hi-hat
+```
+x x?30% x x?50% x x?30% x x?50%
+```
 
-- Snare with delay only on accents:
-  - `xv80 xv110[delay.on, delay.time=1/8] xv80 xv110[delay.on]`
+### Snare with ratchet fill
+```
+.... x... .... x{4}.
+```
 
-- Conditional fill every 4th cycle:
-  - `.... .... .... x@1/4{4}`
+### Synth arpeggio
+```
+x x+4 x+7 x+12 x+7 x+4
+```
 
-## Authoring tips
+### Chord progression
+```
+(x x+4 x+7)___ (x+5 x+9 x+12)___ (x+7 x+11 x+14)___
+```
 
-- Keep lines to 64–80 visible characters for readability.
-- Use bars `|` and spacing to communicate structure to humans.
-- Prefer explicit `div` per track rather than encoding tempo changes in patterns.
+### Delay on accents only
+```
+xv80 xv110[delay.on] xv80 xv110[delay.on]
+```
 
-## Compatibility and migration
+## Tips
 
-- Existing simple patterns remain valid. Additional characters are ignored by current versions, so you can start writing `x+2` or `x?35%` today without breaking playback; they will take effect once the parser ships.
+- Keep patterns under 80 characters for readability
+- Use `|` and spaces to show bar structure
+- Set `div` per track rather than changing pattern length
+- Use probability for generative variation
+- Combine ratchets and velocity for expressive rolls
 
-See also:
+## See Also
 
-- documentation/features/full-spec.md
+- [Command Reference](commands.md) — All REPL commands
+- [Quickstart](quickstart.md) — Tutorial introduction

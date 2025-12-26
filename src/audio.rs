@@ -7,15 +7,41 @@ use anyhow::{anyhow, Context, Result};
 use once_cell::sync::OnceCell;
 use rodio::{Decoder, OutputStream, Sink, Source};
 
+// Simple xorshift RNG for probability evaluation
+#[derive(Clone)]
+struct SimpleRng {
+    state: u64,
+}
+
+impl SimpleRng {
+    fn new(seed: u64) -> Self {
+        Self { state: seed.max(1) }
+    }
+    
+    fn next_f32(&mut self) -> f32 {
+        // xorshift64
+        let mut x = self.state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.state = x;
+        // Convert to 0.0..1.0
+        (x as f32) / (u64::MAX as f32)
+    }
+}
+
 use crate::model::song::Song;
 use crate::model::track::TrackPlayback;
+use crate::model::fx::Delay;
 use crate::pattern::visual::Gate;
 
 pub mod timing;
 pub mod compile;
+pub mod effects;
 
-use compile::{visual_to_tokens_and_pitches, CompiledPattern};
-use timing::{base_step_period, gate_duration, pitch_semitones_to_speed, step_period_with_swing};
+use compile::{visual_to_tokens_and_pitches, CompiledPattern, CompiledStep};
+use timing::{base_step_period, gate_duration, pitch_semitones_to_speed, step_period_with_swing, velocity_to_gain};
+use effects::{DelayEffect, parse_delay_time};
 
 static PLAYING: AtomicBool = AtomicBool::new(false);
 
@@ -146,71 +172,78 @@ pub fn play_song(song: &Song) -> Result<()> {
             // Fire any due tokens per track; advance their schedules
             for tr in &mut rt {
                 service_track_voices(tr, now);
+                process_pending_ratchets(&stream_handle, tr, now);
                 while now >= tr.next_time {
-                    if !tr.pattern.is_empty() {
-                        let idx = tr.token_index % tr.pattern.len();
-                        let hit = tr.pattern[idx];
-                        if hit && !tr.muted {
+                    if !tr.steps.is_empty() {
+                        let idx = tr.token_index % tr.steps.len();
+                        // Clone the step to avoid borrow issues
+                        let step = tr.steps[idx].clone();
+                        
+                        if !step.events.is_empty() && !tr.muted {
                             if should_stop_current(tr.playback) {
                                 stop_track_voices(tr);
                             }
-                            let cursor = Cursor::new(tr.data.clone());
-                            let reader = BufReader::new(cursor);
-                            let source = match Decoder::new(reader) {
-                                Ok(s) => {
-                                    let speed = tr
-                                        .pitches
-                                        .get(idx)
-                                        .and_then(|p| *p)
-                                        .map(pitch_semitones_to_speed)
-                                        .unwrap_or(1.0);
-                                    s.speed(speed).amplify(tr.gain)
-                                },
-                                Err(e) => { eprintln!("audio decode error: {}", e); break; }
-                            };
-                            let hold_steps = tr
-                                .gate_steps
-                                .get(idx)
-                                .copied()
-                                .unwrap_or(1)
-                                .max(1);
-                            let gate = tr
-                                .gates
-                                .get(idx)
-                                .copied()
-                                .flatten();
-                            match Sink::try_new(&stream_handle) {
-                                Ok(sink) => {
-                                    let start_instant = Instant::now();
-                                    sink.append(source);
-                                    sink.play();
-                                    let stop_at = gate_stop_deadline(
-                                        tr.playback,
-                                        start_instant,
-                                        tr.base_period,
-                                        hold_steps,
-                                        gate,
-                                    );
-                                    tr.voices.push(VoiceHandle { sink, stop_at });
+                            
+                            // Spawn a voice for each event in the step (chord polyphony)
+                            for event in &step.events {
+                                // Evaluate probability - skip if random exceeds threshold
+                                if let Some(prob) = event.probability {
+                                    let roll = tr.rng.next_f32();
+                                    if roll > prob {
+                                        continue; // Skip this event
+                                    }
                                 }
-                                Err(e) => eprintln!("audio error: {}", e),
+                                
+                                let ratchet_count = event.ratchet.unwrap_or(1).max(1);
+                                let sub_step_duration = tr.base_period / ratchet_count;
+                                
+                                for ratchet_idx in 0..ratchet_count {
+                                    if ratchet_idx == 0 {
+                                        // First hit: trigger immediately
+                                        trigger_voice(
+                                            &stream_handle,
+                                            tr,
+                                            event.pitch,
+                                            event.velocity,
+                                            event.gate,
+                                            step.hold_steps,
+                                            current.bpm,
+                                        );
+                                    } else {
+                                        // Schedule subsequent ratchet hits
+                                        let trigger_at = Instant::now() + sub_step_duration * ratchet_idx;
+                                        tr.pending_ratchets.push(PendingRatchet {
+                                            trigger_at,
+                                            data: tr.data.clone(),
+                                            pitch: event.pitch,
+                                            velocity: event.velocity,
+                                            gain: tr.gain,
+                                            gate: event.gate,
+                                            delay: tr.delay.clone(),
+                                            base_period: sub_step_duration,
+                                            playback: tr.playback,
+                                            bpm: current.bpm,
+                                        });
+                                    }
+                                }
                             }
                         }
-                        tr.token_index = (tr.token_index + 1) % tr.pattern.len();
+                        tr.token_index = (tr.token_index + 1) % tr.steps.len();
                     }
                     // Advance by swing-adjusted step duration
-                    let step = step_period_with_swing(
+                    let step_period = step_period_with_swing(
                         current.bpm,
                         tr.div,
                         current.swing,
                         tr.token_index.saturating_sub(1),
                     );
-                    tr.next_time += step;
+                    tr.next_time += step_period;
                 }
             }
             let after_triggers = Instant::now();
             for tr in &mut rt {
                 service_track_voices(tr, after_triggers);
+                process_pending_ratchets(&stream_handle, tr, after_triggers);
             }
 
             // Update live snapshot for REPL display
@@ -264,10 +297,9 @@ struct LoadedTrack {
     name: String,
     data: Vec<u8>,
     gain: f32,
-    pattern: Vec<bool>,
-    pitches: Vec<Option<i32>>, // semitone offsets per step
-    gate_steps: Vec<usize>,
-    gates: Vec<Option<Gate>>,
+    steps: Vec<CompiledStep>,
+    pattern: Vec<bool>, // kept for live snapshot display
+    delay: Delay,
     div: u32,
     muted: bool,
     playback: TrackPlayback,
@@ -298,7 +330,7 @@ fn build_config(song: &Song) -> SequencerConfig {
                 continue;
             }
         };
-        let compiled = match &t.pattern {
+        let compiled = match t.active_pattern() {
             Some(crate::model::pattern::Pattern::Visual(s)) => visual_to_tokens_and_pitches(s),
             None => CompiledPattern::empty(),
         };
@@ -307,10 +339,9 @@ fn build_config(song: &Song) -> SequencerConfig {
             name: t.name.clone(),
             data: bytes,
             gain: db_to_amplitude(t.gain_db),
+            steps: compiled.steps,
             pattern: compiled.triggers,
-            pitches: compiled.pitches,
-            gate_steps: compiled.hold_steps,
-            gates: compiled.gates,
+            delay: t.delay.clone(),
             div: t.div.max(1),
             muted,
             playback: t.playback,
@@ -327,10 +358,9 @@ fn is_muted(any_solo: bool, mute: bool, solo: bool) -> bool {
 struct TrackRuntime {
     data: Vec<u8>,
     gain: f32,
-    pattern: Vec<bool>,
-    pitches: Vec<Option<i32>>,
-    gate_steps: Vec<usize>,
-    gates: Vec<Option<Gate>>,
+    steps: Vec<CompiledStep>,
+    pattern: Vec<bool>, // kept for live snapshot display
+    delay: Delay,
     base_period: Duration,
     next_time: Instant,
     token_index: usize,
@@ -338,11 +368,28 @@ struct TrackRuntime {
     div: u32,
     playback: TrackPlayback,
     voices: Vec<VoiceHandle>,
+    pending_ratchets: Vec<PendingRatchet>,
+    rng: SimpleRng, // For probability evaluation
 }
 
 struct VoiceHandle {
     sink: Sink,
     stop_at: Option<Instant>,
+}
+
+/// Pending ratchet sub-hit to be triggered at a specific time.
+#[derive(Clone)]
+struct PendingRatchet {
+    trigger_at: Instant,
+    data: Vec<u8>,
+    pitch: i32,
+    velocity: u8,
+    gain: f32,
+    gate: Option<Gate>,
+    delay: Delay,
+    base_period: Duration,
+    playback: TrackPlayback,
+    bpm: u32,
 }
 
 fn service_track_voices(track: &mut TrackRuntime, now: Instant) {
@@ -355,6 +402,123 @@ fn service_track_voices(track: &mut TrackRuntime, now: Instant) {
         }
     }
     track.voices.retain(|voice| !voice.sink.empty());
+}
+
+/// Trigger a single voice with the given parameters.
+fn trigger_voice(
+    stream_handle: &rodio::OutputStreamHandle,
+    tr: &mut TrackRuntime,
+    pitch: i32,
+    velocity: u8,
+    gate: Option<Gate>,
+    hold_steps: usize,
+    bpm: u32,
+) {
+    let cursor = Cursor::new(tr.data.clone());
+    let reader = BufReader::new(cursor);
+    let decoded = match Decoder::new(reader) {
+        Ok(s) => s,
+        Err(e) => { eprintln!("audio decode error: {}", e); return; }
+    };
+    
+    let speed = pitch_semitones_to_speed(pitch);
+    let vel_gain = velocity_to_gain(velocity);
+    
+    // Build source with pitch and gain
+    let base_source = decoded
+        .speed(speed)
+        .amplify(tr.gain * vel_gain)
+        .convert_samples::<f32>();
+    
+    // Apply delay if enabled
+    let final_source: Box<dyn Source<Item = f32> + Send> = if tr.delay.on {
+        let delay_time = parse_delay_time(&tr.delay.time, bpm);
+        Box::new(DelayEffect::new(
+            base_source,
+            delay_time,
+            tr.delay.feedback,
+            tr.delay.mix,
+        ))
+    } else {
+        Box::new(base_source)
+    };
+    
+    match Sink::try_new(stream_handle) {
+        Ok(sink) => {
+            let start_instant = Instant::now();
+            sink.append(final_source);
+            sink.play();
+            let stop_at = gate_stop_deadline(
+                tr.playback,
+                start_instant,
+                tr.base_period,
+                hold_steps.max(1),
+                gate,
+            );
+            tr.voices.push(VoiceHandle { sink, stop_at });
+        }
+        Err(e) => eprintln!("audio error: {}", e),
+    }
+}
+
+/// Process pending ratchet sub-hits that are due.
+fn process_pending_ratchets(
+    stream_handle: &rodio::OutputStreamHandle,
+    track: &mut TrackRuntime,
+    now: Instant,
+) {
+    let mut triggered = Vec::new();
+    for (i, ratchet) in track.pending_ratchets.iter().enumerate() {
+        if now >= ratchet.trigger_at {
+            triggered.push(i);
+        }
+    }
+    
+    // Trigger in reverse order to avoid index issues when removing
+    for i in triggered.into_iter().rev() {
+        let ratchet = track.pending_ratchets.remove(i);
+        
+        let cursor = Cursor::new(ratchet.data);
+        let reader = BufReader::new(cursor);
+        let decoded = match Decoder::new(reader) {
+            Ok(s) => s,
+            Err(e) => { eprintln!("audio decode error: {}", e); continue; }
+        };
+        
+        let speed = pitch_semitones_to_speed(ratchet.pitch);
+        let vel_gain = velocity_to_gain(ratchet.velocity);
+        
+        let base_source = decoded
+            .speed(speed)
+            .amplify(ratchet.gain * vel_gain)
+            .convert_samples::<f32>();
+        
+        let final_source: Box<dyn Source<Item = f32> + Send> = if ratchet.delay.on {
+            let delay_time = parse_delay_time(&ratchet.delay.time, ratchet.bpm);
+            Box::new(DelayEffect::new(
+                base_source,
+                delay_time,
+                ratchet.delay.feedback,
+                ratchet.delay.mix,
+            ))
+        } else {
+            Box::new(base_source)
+        };
+        
+        if let Ok(sink) = Sink::try_new(stream_handle) {
+            let start_instant = Instant::now();
+            sink.append(final_source);
+            sink.play();
+            let stop_at = gate_stop_deadline(
+                ratchet.playback,
+                start_instant,
+                ratchet.base_period,
+                1,
+                ratchet.gate,
+            );
+            track.voices.push(VoiceHandle { sink, stop_at });
+        }
+    }
 }
 
 fn stop_track_voices(track: &mut TrackRuntime) {
@@ -401,13 +565,13 @@ fn build_runtime(cfg: &SequencerConfig) -> Vec<TrackRuntime> {
     let now = Instant::now();
     cfg.tracks
         .iter()
-        .map(|t| TrackRuntime {
+        .enumerate()
+        .map(|(i, t)| TrackRuntime {
             data: t.data.clone(),
             gain: t.gain,
+            steps: t.steps.clone(),
             pattern: t.pattern.clone(),
-            pitches: t.pitches.clone(),
-            gate_steps: t.gate_steps.clone(),
-            gates: t.gates.clone(),
+            delay: t.delay.clone(),
             base_period: base_step_period(cfg.bpm, t.div),
             next_time: now,
             token_index: 0,
@@ -415,6 +579,8 @@ fn build_runtime(cfg: &SequencerConfig) -> Vec<TrackRuntime> {
             div: t.div,
             playback: t.playback,
             voices: Vec::new(),
+            pending_ratchets: Vec::new(),
+            rng: SimpleRng::new((i as u64 + 1) * 12345), // Seed based on track index
         })
         .collect()
 }
@@ -455,10 +621,9 @@ fn merge_runtime_preserving_phase(
             out.push(TrackRuntime {
                 data: t.data.clone(),
                 gain: t.gain,
+                steps: t.steps.clone(),
                 pattern: t.pattern.clone(),
-                pitches: t.pitches.clone(),
-                gate_steps: t.gate_steps.clone(),
-                gates: t.gates.clone(),
+                delay: t.delay.clone(),
                 base_period: new_period,
                 next_time: new_next,
                 token_index: new_token_index,
@@ -466,16 +631,18 @@ fn merge_runtime_preserving_phase(
                 div: t.div,
                 playback: t.playback,
                 voices: Vec::new(),
+                pending_ratchets: Vec::new(),
+                rng: old_rt.rng.clone(), // Preserve RNG state
             });
         } else {
             // New track: schedule from next token boundary
+            let track_idx = out.len();
             out.push(TrackRuntime {
                 data: t.data.clone(),
                 gain: t.gain,
+                steps: t.steps.clone(),
                 pattern: t.pattern.clone(),
-                pitches: t.pitches.clone(),
-                gate_steps: t.gate_steps.clone(),
-                gates: t.gates.clone(),
+                delay: t.delay.clone(),
                 base_period: new_period,
                 next_time: now + new_period,
                 token_index: 0,
@@ -483,6 +650,8 @@ fn merge_runtime_preserving_phase(
                 div: t.div,
                 playback: t.playback,
                 voices: Vec::new(),
+                pending_ratchets: Vec::new(),
+                rng: SimpleRng::new((track_idx as u64 + 1) * 12345),
             });
         }
     }
@@ -612,7 +781,8 @@ mod playback_mode_tests {
 
         let cfg = build_config(&song);
         assert_eq!(cfg.tracks.len(), 1);
-        let sustain = cfg.tracks[0].gate_steps.get(0).copied();
+        // Check sustain via the new steps structure
+        let sustain = cfg.tracks[0].steps.get(0).map(|s| s.hold_steps);
         assert_eq!(sustain, Some(8));
     }
 }

@@ -19,7 +19,7 @@ pub fn step_period_with_swing(bpm: u32, div: u32, swing_percent: u8, token_index
     // Apply swing as alternating long/short steps. Use even/odd token index.
     let f = swing_fraction(swing_percent);
     let base_sec = base.as_secs_f64();
-    let factor = if token_index.is_multiple_of(2) { 1.0 + f } else { 1.0 - f };
+    let factor = if token_index % 2 == 0 { 1.0 + f } else { 1.0 - f };
     Duration::from_secs_f64(base_sec * factor)
 }
 
@@ -46,6 +46,23 @@ pub fn gate_duration(step_period: Duration, gate: Gate) -> Duration {
 pub fn pitch_semitones_to_speed(semi: i32) -> f32 {
     2f32.powf(semi as f32 / 12.0)
 }
+
+/// Convert MIDI velocity (0-127) to amplitude gain factor.
+/// Uses a curve that feels musical: velocity 100 is unity gain (1.0),
+/// velocity 127 is slightly boosted, and velocity 0 is silent.
+pub fn velocity_to_gain(velocity: u8) -> f32 {
+    if velocity == 0 {
+        return 0.0;
+    }
+    // Map 0-127 to gain where 100 = 1.0, 127 ≈ 1.27, 64 ≈ 0.64
+    (velocity as f32) / 100.0
+}
+
+/// Default velocity for accented notes (X instead of x).
+pub const ACCENT_VELOCITY: u8 = 110;
+
+/// Default velocity for normal hits when no velocity is specified.
+pub const DEFAULT_VELOCITY: u8 = 100;
 
 #[cfg(test)]
 mod tests {
@@ -89,5 +106,25 @@ mod tests {
         assert!((pitch_semitones_to_speed(0) - 1.0).abs() < 1e-6);
         assert!((pitch_semitones_to_speed(12) - 2.0).abs() < 1e-6);
         assert!((pitch_semitones_to_speed(-12) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn velocity_to_gain_basic() {
+        // Zero velocity is silent
+        assert_eq!(velocity_to_gain(0), 0.0);
+        // Default velocity (100) is unity gain
+        assert!((velocity_to_gain(100) - 1.0).abs() < 1e-6);
+        // Max velocity (127) is boosted
+        assert!((velocity_to_gain(127) - 1.27).abs() < 1e-6);
+        // Mid velocity
+        assert!((velocity_to_gain(64) - 0.64).abs() < 1e-6);
+        // Monotonic: higher velocity = higher gain
+        assert!(velocity_to_gain(80) < velocity_to_gain(100));
+        assert!(velocity_to_gain(100) < velocity_to_gain(127));
+    }
+
+    #[test]
+    fn accent_velocity_is_louder_than_default() {
+        assert!(ACCENT_VELOCITY > DEFAULT_VELOCITY);
     }
 }

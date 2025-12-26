@@ -1,3 +1,4 @@
+mod ai;
 mod model;
 mod repl;
 mod storage;

@@ -7,13 +7,21 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Result};
 use rustyline::{error::ReadlineError, history::DefaultHistory, Editor, ExternalPrinter};
 
+use crate::ai::{AiConfig, PatternContext, suggest_patterns};
 use crate::model::pattern::Pattern;
 use crate::model::song::Song;
 use crate::model::track::{Track, TrackPlayback};
+use crate::pattern::scripted::PatternEngine;
 use crate::storage::song as song_io;
 
+mod completer;
+use completer::GrooveHelper;
+
 pub fn run_repl(song: &mut Song) -> Result<()> {
-    let mut rl = Editor::<(), DefaultHistory>::new()?;
+    let helper = GrooveHelper::new();
+    let mut rl = Editor::<GrooveHelper, DefaultHistory>::new()?;
+    rl.set_helper(Some(helper));
+    
     // Install external printer so background logs don't break the input line
     if let Ok(pr) = rl.create_external_printer() {
         let lock = StdMutex::new(pr);
@@ -130,17 +138,160 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
         "pattern" => {
             let idx = parts
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: pattern <track_idx> \"pattern\""))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: pattern <track_idx>[.var] \"pattern\""))?;
             let pat = parts
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: pattern <track_idx> \"pattern\""))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: pattern <track_idx>[.var] \"pattern\""))?;
+            
+            // Check for variation notation: "1.a", "kick.fill"
+            let (track_idx, variation) = if let Some(dot_pos) = idx.find('.') {
+                let (t, v) = idx.split_at(dot_pos);
+                (t.to_string(), Some(v[1..].to_string()))
+            } else {
+                (idx.to_string(), None)
+            };
+            
             let msg = {
-                let (i, track) = track_mut(song, &idx)?;
-                track.pattern = Some(Pattern::visual(pat));
-                format!("track {} pattern set", i)
+                let (i, track) = track_mut(song, &track_idx)?;
+                if let Some(var_name) = variation {
+                    track.variations.insert(var_name.clone(), Pattern::visual(pat));
+                    format!("track {} variation '{}' set", i, var_name)
+                } else {
+                    track.pattern = Some(Pattern::visual(pat));
+                    format!("track {} pattern set", i)
+                }
             };
             crate::audio::reload_song(song);
             Ok(Output::Text(msg))
+        }
+        "var" => {
+            // Switch track to a different variation: var <track_idx> <variation_name>
+            // Or: var <track_idx> (to show current variation and list available)
+            let idx = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: var <track_idx> [variation_name|main]"))?;
+            
+            if let Some(var_name) = parts.next() {
+                let msg = {
+                    let (i, track) = track_mut(song, &idx)?;
+                    if var_name == "main" || var_name == "-" {
+                        track.current_variation = None;
+                        format!("track {} switched to main pattern", i)
+                    } else if track.variations.contains_key(&var_name.to_string()) {
+                        track.current_variation = Some(var_name.to_string());
+                        format!("track {} switched to variation '{}'", i, var_name)
+                    } else {
+                        return Err(anyhow::anyhow!(
+                            "variation '{}' not found. available: {}",
+                            var_name,
+                            track.variations.keys().cloned().collect::<Vec<_>>().join(", ")
+                        ));
+                    }
+                };
+                crate::audio::reload_song(song);
+                Ok(Output::Text(msg))
+            } else {
+                // List variations
+                let (i, track) = track_mut(song, &idx)?;
+                let current = track.current_variation.as_deref().unwrap_or("main");
+                let vars: Vec<String> = std::iter::once("main".to_string())
+                    .chain(track.variations.keys().cloned())
+                    .map(|v| if v == current { format!("[{}]", v) } else { v })
+                    .collect();
+                Ok(Output::Text(format!("track {} variations: {}", i, vars.join(", "))))
+            }
+        }
+        "gen" => {
+            // Generate a pattern using Rhai scripting
+            // Usage: gen <track_idx> `script` or gen `script` (preview only)
+            let first = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: gen <track_idx> `script` or gen `script`"))?;
+            
+            let engine = PatternEngine::new();
+            
+            // Check if first arg is a track index or script
+            if first.starts_with('`') || first.starts_with('"') {
+                // Preview mode: just evaluate and print
+                let script = first.trim_matches(|c| c == '`' || c == '"');
+                match engine.eval(script) {
+                    Ok(pattern) => Ok(Output::Text(format!("generated: {}", pattern))),
+                    Err(e) => Err(anyhow::anyhow!("script error: {}", e)),
+                }
+            } else {
+                // Apply to track
+                let script = parts
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("usage: gen <track_idx> `script`"))?;
+                let script = script.trim_matches(|c| c == '`' || c == '"');
+                
+                match engine.eval(script) {
+                    Ok(pattern) => {
+                        let (i, track) = track_mut(song, &first)?;
+                        track.pattern = Some(Pattern::visual(&pattern));
+                        crate::audio::reload_song(song);
+                        Ok(Output::Text(format!("track {} pattern: {}", i, pattern)))
+                    }
+                    Err(e) => Err(anyhow::anyhow!("script error: {}", e)),
+                }
+            }
+        }
+        "ai" => {
+            // AI-powered pattern suggestions
+            // Usage: ai [track_idx] "description"
+            let first = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: ai [track_idx] \"description\""))?;
+            
+            // Collect remaining args as description
+            let (track_idx, description) = if first.starts_with('"') || first.contains(' ') {
+                // No track index, just description
+                let desc: String = std::iter::once(first.to_string())
+                    .chain(parts.map(|s| s.to_string()))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                (None, desc.trim_matches('"').to_string())
+            } else {
+                // Track index provided
+                let desc = parts
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                (Some(first.to_string()), desc.trim_matches('"').to_string())
+            };
+            
+            let config = AiConfig::default();
+            let context = PatternContext {
+                bpm: song.bpm,
+                steps: 16,
+                genre_hint: None,
+                other_patterns: song.tracks
+                    .iter()
+                    .filter_map(|t| t.active_pattern())
+                    .filter_map(|p| match p {
+                        Pattern::Visual(s) => Some(s.clone()),
+                    })
+                    .take(3)
+                    .collect(),
+            };
+            
+            println!("Generating patterns for '{}'...", description);
+            
+            match suggest_patterns(&config, &description, &context) {
+                Ok(patterns) => {
+                    let mut output = String::from("Suggestions:\n");
+                    for (i, pat) in patterns.iter().enumerate() {
+                        output.push_str(&format!("  {}) {}\n", i + 1, pat));
+                    }
+                    
+                    if let Some(idx) = track_idx {
+                        output.push_str(&format!("\nTo apply: pattern {} \"<pattern>\"\n", idx));
+                    }
+                    
+                    Ok(Output::Text(output))
+                }
+                Err(e) => Err(anyhow::anyhow!("AI generation failed: {}", e)),
+            }
         }
         "sample" => {
             let idx = parts
@@ -576,26 +727,48 @@ fn handle_meta(_song: &mut Song, meta: &str) -> Result<Output> {
 const HELP: &str = r#"Commands:
   :help                 Show this help
   :q / :quit            Exit
-  :live [on|off]        Toggle or show live playing view status
+  :live [on|off]        Toggle or show live playing view
 
+Song:
   bpm <n>               Set tempo (e.g., 120)
   steps <n>             Set steps per bar (e.g., 16)
   swing <percent>       Set swing percent (0..100)
-  track "Name"          Add a track
-  sample <idx> "path"   Set sample path on track
-  pattern <idx> "..."   Set visual pattern on track
-  delay <idx> on|off    Toggle delay
-  delay <idx> time "1/4" [fb <0..1>] [mix <0..1>]
-  mute <idx> [on|off]   Toggle or set mute state
-  solo <idx> [on|off]   Toggle or set solo state
-  gain <idx> <db>       Set track gain in decibels
-  playback <idx> <mode> Set track playback (gate|mono|one_shot)
-  remove <idx>          Remove a track
-  list                  List tracks
   play | stop           Start/stop playback
-  clear                 Clear the terminal (like shell 'clear')
-  save "song.yaml"      Save current song to YAML
-  open "song.yaml"      Open a song from YAML
+  save "file.yaml"      Save song to YAML
+  open "file.yaml"      Load song from YAML
+
+Tracks:
+  track "Name"          Add a track
+  remove <idx>          Remove a track
+  list                  List all tracks
+  sample <idx> "path"   Set sample (Tab for autocomplete)
+  pattern <idx> "..."   Set pattern (x=hit, .=rest)
+  mute <idx> [on|off]   Toggle mute
+  solo <idx> [on|off]   Toggle solo
+  gain <idx> <db>       Set gain in dB
+  playback <idx> <mode> Set mode: gate|mono|one_shot
+  div <idx> <n>         Set step division (4=16ths)
+
+Variations:
+  pattern <idx>.<var> "..."   Set named variation
+  var <idx> [name|main]       Switch variation
+
+Delay:
+  delay <idx> on|off          Toggle delay
+  delay <idx> time <t>        Set time (1/4, 1/8, 100ms)
+  delay <idx> feedback <f>    Set feedback (0.0-1.0)
+  delay <idx> mix <m>         Set wet/dry mix (0.0-1.0)
+
+Generators:
+  gen <idx> `script`    Generate pattern with Rhai
+                        Built-ins: euclid(k,n), random(d,seed), fill(n)
+  ai "description"      AI pattern suggestions (requires Ollama)
+
+Pattern notation: x=hit X=accent .=rest _=tie
+  Modifiers: +7 (pitch) v80 (velocity) ?50% (prob) {3} (ratchet)
+  Chords: (x x+4 x+7)   Gates: =3/4   Repeats: (x.)*4
+
+  clear                 Clear terminal
 "#;
 
 fn parse_track_index(song: &Song, raw: &str) -> Result<usize> {
