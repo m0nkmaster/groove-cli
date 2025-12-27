@@ -2,74 +2,172 @@
 
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
+use std::env;
 
 /// Configuration for the AI pattern generator.
 #[derive(Clone)]
 pub struct AiConfig {
-    /// API endpoint (e.g., "http://localhost:11434/api/generate" for Ollama)
-    pub endpoint: String,
-    /// Model name (e.g., "llama3.2", "claude-3-sonnet")
+    /// OpenAI API key
+    pub api_key: Option<String>,
+    /// Model name
     pub model: String,
 }
 
 impl Default for AiConfig {
     fn default() -> Self {
+        // Try to load from .env file (check both locations)
+        let _ = dotenvy::from_filename(".env");
+        let _ = dotenvy::from_filename("src/.env");
+        
         Self {
-            // Default to Ollama running locally
-            endpoint: "http://localhost:11434/api/generate".to_string(),
-            model: "llama3.2".to_string(),
+            api_key: env::var("OPENAI_API_KEY").ok(),
+            model: "gpt-4o-mini".to_string(),
         }
     }
 }
 
-/// Request body for Ollama-compatible API.
+/// OpenAI chat completions request
 #[derive(Serialize)]
-struct OllamaRequest {
+struct OpenAIRequest {
     model: String,
-    prompt: String,
-    stream: bool,
+    messages: Vec<Message>,
+    max_tokens: u32,
 }
 
-/// Response from Ollama-compatible API.
+#[derive(Serialize)]
+struct Message {
+    role: String,
+    content: String,
+}
+
+/// OpenAI chat completions response
 #[derive(Deserialize)]
-struct OllamaResponse {
-    response: String,
+struct OpenAIResponse {
+    choices: Vec<Choice>,
+}
+
+#[derive(Deserialize)]
+struct Choice {
+    message: ResponseMessage,
+}
+
+#[derive(Deserialize)]
+struct ResponseMessage {
+    content: String,
 }
 
 /// Generate pattern suggestions based on a description.
 pub fn suggest_patterns(config: &AiConfig, description: &str, context: &PatternContext) -> Result<Vec<String>> {
+    // Try keyword-based patterns first for reliability
+    if let Some(pattern) = keyword_pattern(description, context.steps) {
+        return Ok(vec![pattern]);
+    }
+    
+    let api_key = config.api_key.as_ref()
+        .ok_or_else(|| anyhow!("OPENAI_API_KEY not set in src/.env"))?;
+    
     let prompt = build_prompt(description, context);
     
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
     
-    let request = OllamaRequest {
+    let request = OpenAIRequest {
         model: config.model.clone(),
-        prompt,
-        stream: false,
+        messages: vec![
+            Message {
+                role: "system".to_string(),
+                content: "You generate drum patterns. Reply with ONLY the pattern using x (hit) and . (rest). No explanation.".to_string(),
+            },
+            Message {
+                role: "user".to_string(),
+                content: prompt,
+            },
+        ],
+        max_tokens: 50,
     };
     
     let response = client
-        .post(&config.endpoint)
+        .post("https://api.openai.com/v1/chat/completions")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Content-Type", "application/json")
         .json(&request)
         .send()
-        .map_err(|e| anyhow!("AI request failed: {}. Is Ollama running?", e))?;
+        .map_err(|e| anyhow!("AI request failed: {}", e))?;
     
     if !response.status().is_success() {
-        return Err(anyhow!("AI API error: {}", response.status()));
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+        return Err(anyhow!("OpenAI API error {}: {}", status, body));
     }
     
-    let result: OllamaResponse = response.json()
-        .map_err(|e| anyhow!("Failed to parse AI response: {}", e))?;
+    let result: OpenAIResponse = response.json()
+        .map_err(|e| anyhow!("Failed to parse OpenAI response: {}", e))?;
+    
+    let content = result.choices.first()
+        .map(|c| c.message.content.clone())
+        .unwrap_or_default();
     
     // Parse patterns from response
-    let patterns = extract_patterns(&result.response);
+    let patterns = extract_patterns(&content);
     
     if patterns.is_empty() {
-        Err(anyhow!("No valid patterns in AI response"))
+        Err(anyhow!("No valid patterns in AI response: {}", content))
     } else {
         Ok(patterns)
+    }
+}
+
+/// Match common descriptions to reliable patterns.
+fn keyword_pattern(desc: &str, steps: usize) -> Option<String> {
+    let d = desc.to_lowercase();
+    
+    let pattern = if d.contains("4") && (d.contains("floor") || d.contains("beat") || d.contains("kick")) {
+        "x...x...x...x..."
+    } else if d.contains("simple") && d.contains("kick") {
+        "x...x...x...x..."
+    } else if d.contains("offbeat") {
+        "..x...x...x...x."
+    } else if d.contains("8th") || d.contains("eighth") {
+        "x.x.x.x.x.x.x.x."
+    } else if d.contains("16th") || d.contains("sixteenth") {
+        "xxxxxxxxxxxxxxxx"
+    } else if d.contains("sparse") {
+        "x.......x......."
+    } else if d.contains("syncopat") {
+        "x..x..x...x..x.."
+    } else if d.contains("backbeat") || (d.contains("snare") && d.contains("2") && d.contains("4")) {
+        "....x.......x..."
+    } else if d.contains("shuffle") {
+        "x..x..x..x..x..x"
+    } else if d.contains("funk") {
+        "x..x.x..x..x.x.."
+    } else if d.contains("reggae") || d.contains("dub") {
+        "..x...x...x...x."
+    } else if d.contains("techno") && d.contains("kick") {
+        "x...x...x...x..."
+    } else if d.contains("dnb") || d.contains("drum and bass") || d.contains("jungle") {
+        "x.....x.x......."
+    } else if d.contains("trap") {
+        "x..x..x.x..x..x."
+    } else if d.contains("house") {
+        "x...x...x...x..."
+    } else {
+        return None; // No match, use AI
+    };
+    
+    // Adjust to requested step count
+    Some(adjust_pattern_length(pattern, steps))
+}
+
+/// Repeat or truncate pattern to match target length.
+fn adjust_pattern_length(pattern: &str, steps: usize) -> String {
+    if pattern.len() == steps {
+        pattern.to_string()
+    } else if pattern.len() > steps {
+        pattern[..steps].to_string()
+    } else {
+        pattern.chars().cycle().take(steps).collect()
     }
 }
 
@@ -95,30 +193,28 @@ impl Default for PatternContext {
 
 fn build_prompt(description: &str, context: &PatternContext) -> String {
     let mut prompt = format!(
-        r#"You are a drum pattern generator. Generate exactly 1 pattern for: "{}"
+        r#"Generate a {}-step drum pattern for: "{}"
 
-SYNTAX: x=hit, X=accent, .=rest (exactly {} characters, no spaces)
+RULES:
+- x = hit, . = rest
+- Exactly {} characters total
+- Match the description's feel (sparse=few hits, busy=many hits)
 
-EXAMPLES:
-x...x...x...x... (4-on-floor)
-x.x.x.x.x.x.x.x. (8th notes)
-X...x...X...x... (accented)
+STYLE EXAMPLES:
+"simple kick" or "4 on floor" → x...x...x...x...
+"offbeat hihat" → ..x...x...x...x.
+"busy snare" → x.x.x.x.x.x.x.x.
+"sparse kick" → x.......x.......
+"syncopated" → x..x..x...x..x..
 
-BPM: {}
+Reply with ONLY the pattern, nothing else:
 "#,
-        description, context.steps, context.bpm
+        context.steps, description, context.steps
     );
     
     if !context.other_patterns.is_empty() {
-        prompt.push_str("Complement: ");
-        prompt.push_str(&context.other_patterns.first().unwrap_or(&String::new()));
-        prompt.push('\n');
+        prompt.push_str(&format!("(complement: {})\n", context.other_patterns.first().unwrap_or(&String::new())));
     }
-    
-    prompt.push_str(&format!(
-        "\nReply with ONLY the {}-character pattern. No explanation.",
-        context.steps
-    ));
     
     prompt
 }
@@ -187,9 +283,18 @@ X...x...X...x...
             other_patterns: vec!["x...x...x...x...".to_string()],
         };
         let prompt = build_prompt("punchy kick", &ctx);
-        assert!(prompt.contains("140"));
+        assert!(prompt.contains("16"));
         assert!(prompt.contains("punchy kick"));
         assert!(prompt.contains("x...x...x...x..."));
+    }
+
+    #[test]
+    fn keyword_patterns_work() {
+        assert_eq!(keyword_pattern("simple kick", 16), Some("x...x...x...x...".to_string()));
+        assert_eq!(keyword_pattern("4 on the floor", 16), Some("x...x...x...x...".to_string()));
+        assert_eq!(keyword_pattern("offbeat hat", 16), Some("..x...x...x...x.".to_string()));
+        assert_eq!(keyword_pattern("backbeat snare", 16), Some("....x.......x...".to_string()));
+        assert_eq!(keyword_pattern("random weird thing", 16), None); // falls back to AI
     }
 }
 
