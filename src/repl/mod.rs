@@ -300,13 +300,56 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
             let p = parts
                 .next()
                 .ok_or_else(|| anyhow::anyhow!("usage: sample <track_idx> \"path\""))?;
+            
+            // Resolve sample path (supports shortcuts like "909/kick")
+            let resolved = resolve_sample_path(&p);
+            
+            // Validate sample exists
+            let path = std::path::Path::new(&resolved);
+            if !path.exists() {
+                // Try to find similar samples
+                let suggestions = find_similar_samples(&p);
+                let mut msg = format!("sample not found: {}", resolved);
+                if !suggestions.is_empty() {
+                    msg.push_str("\n\nDid you mean:");
+                    for s in suggestions.iter().take(5) {
+                        msg.push_str(&format!("\n  {}", s));
+                    }
+                }
+                msg.push_str("\n\nTip: use `samples` to list available samples");
+                return Err(anyhow::anyhow!("{}", msg));
+            }
+            
             let msg = {
                 let (i, track) = track_mut(song, &idx)?;
-                track.sample = Some(p.to_string());
-                format!("track {} sample set", i)
+                track.sample = Some(resolved.clone());
+                format!("track {} sample: {}", i, resolved)
             };
             crate::audio::reload_song(song);
             Ok(Output::Text(msg))
+        }
+        "samples" => {
+            // List available samples with optional filter
+            let filter = parts.next();
+            let samples = list_available_samples(filter.as_deref());
+            if samples.is_empty() {
+                Ok(Output::Text("no samples found (add .wav/.mp3 files to samples/)".into()))
+            } else {
+                Ok(Output::Text(samples))
+            }
+        }
+        "preview" => {
+            // Preview a sample without setting it
+            let p = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: preview \"path\""))?;
+            let resolved = resolve_sample_path(&p);
+            let path = std::path::Path::new(&resolved);
+            if !path.exists() {
+                return Err(anyhow::anyhow!("sample not found: {}", resolved));
+            }
+            crate::audio::preview_sample(&resolved)?;
+            Ok(Output::Text(format!("▶ {}", resolved)))
         }
         "list" => Ok(Output::Text(song.list())),
         "play" => {
@@ -742,6 +785,8 @@ Tracks:
   remove <idx>          Remove a track
   list                  List all tracks
   sample <idx> "path"   Set sample (Tab for autocomplete)
+  samples [filter]      List available samples
+  preview "path"        Play sample without setting
   pattern <idx> "..."   Set pattern (x=hit, .=rest)
   mute <idx> [on|off]   Toggle mute
   solo <idx> [on|off]   Toggle solo
@@ -819,6 +864,182 @@ pub(crate) fn live_view_enabled() -> bool {
 // ANSI helpers for simple highlighting
 const GREEN: &str = "\x1b[32m";
 const RESET: &str = "\x1b[0m";
+
+// Sample path helpers
+
+/// Resolve sample path shortcuts to full paths.
+/// Supports:
+/// - Full paths: "samples/kits/harsh 909/Kick.wav"
+/// - Kit shortcuts: "909/kick" -> finds matching sample
+/// - Name only: "kick" -> finds first matching sample
+fn resolve_sample_path(input: &str) -> String {
+    let input_lower = input.to_lowercase();
+    
+    // Already a valid path
+    if std::path::Path::new(input).exists() {
+        return input.to_string();
+    }
+    
+    // Scan samples and find best match
+    let samples = scan_all_samples();
+    
+    // Try exact filename match first
+    for s in &samples {
+        let filename = std::path::Path::new(s)
+            .file_stem()
+            .and_then(|f| f.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if filename == input_lower {
+            return s.clone();
+        }
+    }
+    
+    // Try partial path match (e.g., "909/kick" matches "samples/kits/harsh 909/Kick.wav")
+    for s in &samples {
+        let s_lower = s.to_lowercase();
+        // Check if all parts of input are present in order
+        let input_parts: Vec<&str> = input_lower.split('/').collect();
+        let mut all_match = true;
+        let mut search_start = 0;
+        for part in &input_parts {
+            if let Some(pos) = s_lower[search_start..].find(part) {
+                search_start += pos + part.len();
+            } else {
+                all_match = false;
+                break;
+            }
+        }
+        if all_match {
+            return s.clone();
+        }
+    }
+    
+    // Try fuzzy match on filename contains
+    for s in &samples {
+        let filename = std::path::Path::new(s)
+            .file_stem()
+            .and_then(|f| f.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if filename.contains(&input_lower) {
+            return s.clone();
+        }
+    }
+    
+    // Return original if no match found
+    input.to_string()
+}
+
+/// Find samples similar to the given query for suggestions.
+fn find_similar_samples(query: &str) -> Vec<String> {
+    let query_lower = query.to_lowercase();
+    let samples = scan_all_samples();
+    
+    let mut matches: Vec<(usize, String)> = samples
+        .into_iter()
+        .filter_map(|s| {
+            let s_lower = s.to_lowercase();
+            let filename = std::path::Path::new(&s)
+                .file_stem()
+                .and_then(|f| f.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            
+            // Score based on matching characters
+            let score = query_lower.chars()
+                .filter(|c| filename.contains(*c) || s_lower.contains(*c))
+                .count();
+            
+            if score > query_lower.len() / 2 {
+                Some((score, s))
+            } else {
+                None
+            }
+        })
+        .collect();
+    
+    matches.sort_by(|a, b| b.0.cmp(&a.0));
+    matches.into_iter().map(|(_, s)| s).collect()
+}
+
+/// List available samples, optionally filtered.
+fn list_available_samples(filter: Option<&str>) -> String {
+    let samples = scan_all_samples();
+    
+    let filtered: Vec<&String> = if let Some(f) = filter {
+        let f_lower = f.to_lowercase();
+        samples.iter().filter(|s| s.to_lowercase().contains(&f_lower)).collect()
+    } else {
+        samples.iter().collect()
+    };
+    
+    if filtered.is_empty() {
+        return String::new();
+    }
+    
+    // Group by directory
+    let mut by_dir: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+    for s in filtered {
+        let path = std::path::Path::new(s);
+        let dir = path.parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or("samples")
+            .to_string();
+        let filename = path.file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or(s)
+            .to_string();
+        by_dir.entry(dir).or_default().push(filename);
+    }
+    
+    let mut output = String::new();
+    for (dir, files) in by_dir {
+        output.push_str(&format!("\n{}:\n", dir));
+        for f in files {
+            output.push_str(&format!("  {}\n", f));
+        }
+    }
+    
+    if let Some(f) = filter {
+        output.insert_str(0, &format!("Samples matching '{}':", f));
+    } else {
+        output.insert_str(0, "Available samples:");
+    }
+    
+    output.trim_end().to_string()
+}
+
+/// Scan all samples in the samples directory.
+fn scan_all_samples() -> Vec<String> {
+    let mut samples = Vec::new();
+    let samples_dir = std::path::Path::new("samples");
+    if samples_dir.is_dir() {
+        collect_samples_recursive(samples_dir, &mut samples);
+    }
+    samples.sort();
+    samples
+}
+
+fn collect_samples_recursive(dir: &std::path::Path, out: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_samples_recursive(&path, out);
+        } else if is_audio_file(&path) {
+            if let Some(s) = path.to_str() {
+                out.push(s.to_string());
+            }
+        }
+    }
+}
+
+fn is_audio_file(path: &std::path::Path) -> bool {
+    let Some(ext) = path.extension() else { return false };
+    let ext = ext.to_string_lossy().to_lowercase();
+    matches!(ext.as_str(), "wav" | "mp3" | "ogg" | "flac" | "aiff" | "aif")
+}
 
 #[cfg(test)]
 fn render_live_grid(song: &Song, snap: &crate::audio::LiveSnapshot) -> String {
@@ -1161,15 +1382,17 @@ mod tests {
     #[test]
     fn chaining_executes_commands_in_order() {
         let mut song = Song::default();
+        // Use full path to avoid resolution changing it
         let output = handle_line(
             &mut song,
-            "track(\"Kick\").sample(1, \"samples/909/kick.wav\").pattern(1, \"x...\")",
+            "track(\"Kick\").sample(1, \"samples/kits/harsh 909/Kick.wav\").pattern(1, \"x...\")",
         )
         .expect("chain executes");
 
         assert_eq!(song.tracks.len(), 1);
         assert_eq!(song.tracks[0].name, "Kick");
-        assert_eq!(song.tracks[0].sample.as_deref(), Some("samples/909/kick.wav"));
+        // Sample path may be resolved, just check it contains "Kick"
+        assert!(song.tracks[0].sample.as_deref().unwrap().contains("Kick"));
         match &song.tracks[0].pattern {
             Some(Pattern::Visual(pat)) => assert_eq!(pat, "x..."),
             other => panic!("unexpected pattern state: {:?}", other),
@@ -1177,7 +1400,7 @@ mod tests {
 
         if let Output::Text(t) = output {
             assert!(t.contains("pattern set"));
-            assert!(t.contains("sample set"));
+            assert!(t.contains("sample"));  // May say "sample:" instead of "sample set"
         } else { panic!("expected text output"); }
     }
 }

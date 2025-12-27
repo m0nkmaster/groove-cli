@@ -34,13 +34,63 @@
 |---------|-------------|
 | `track "Name"` | Add a new track |
 | `remove <idx>` | Remove track by index (1-based) |
-| `sample <idx> "path"` | Set sample file path |
+| `sample <idx> "path"` | Set sample (validates & resolves path) |
+| `samples [filter]` | List available samples |
+| `preview "path"` | Play sample without setting |
 | `pattern <idx> "x..."` | Set visual pattern |
 | `mute <idx> [on\|off]` | Toggle or set mute |
 | `solo <idx> [on\|off]` | Toggle or set solo |
 | `gain <idx> <db>` | Set gain in dB (e.g., `gain 1 -3.0`) |
 | `playback <idx> <mode>` | Set mode: `gate`, `mono`, or `one_shot` |
 | `div <idx> <n>` | Set timing division (default 4 = 16ths) |
+
+### Sample Shortcuts
+
+You don't need to type full paths—shortcuts are resolved automatically:
+
+```
+> sample 1 "kick"
+track 1 sample: samples/kits/harsh 909/Kick.wav
+
+> sample 2 "909/snare"
+track 2 sample: samples/kits/harsh 909/Snare.wav
+```
+
+Browse available samples:
+```
+> samples
+Available samples:
+
+samples/kits/harsh 909:
+  Kick.wav
+  Snare.wav
+  Closed Hat.wav
+  ...
+
+> samples hat
+Samples matching 'hat':
+
+samples/kits/harsh 909:
+  Closed Hat.wav
+```
+
+Preview before setting:
+```
+> preview "snare"
+▶ samples/kits/harsh 909/Snare.wav
+```
+
+If a sample isn't found, you'll get suggestions:
+```
+> sample 1 "kik"
+sample not found: kik
+
+Did you mean:
+  samples/kits/harsh 909/Kick.wav
+  samples/kits/harsh 909/Kick Long.wav
+
+Tip: use `samples` to list available samples
+```
 
 ## Pattern Variations
 

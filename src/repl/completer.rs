@@ -60,8 +60,8 @@ fn is_audio_file(path: &Path) -> bool {
 
 /// Commands available in the REPL.
 const COMMANDS: &[&str] = &[
-    "bpm", "steps", "swing", "track", "pattern", "sample",
-    "delay", "mute", "solo", "gain", "playback", "div",
+    "bpm", "steps", "swing", "track", "pattern", "sample", "samples",
+    "delay", "mute", "solo", "gain", "playback", "div", "preview",
     "remove", "list", "play", "stop", "save", "open", "clear",
     "gen", "var", "ai",
 ];

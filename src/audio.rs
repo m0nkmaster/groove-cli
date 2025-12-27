@@ -288,6 +288,31 @@ pub fn stop() {
     PLAYING.store(false, Ordering::SeqCst);
 }
 
+/// Preview a sample by playing it once (without affecting transport).
+pub fn preview_sample(path: &str) -> Result<()> {
+    use rodio::{Decoder, OutputStream, Sink};
+    use std::fs::File;
+    use std::io::BufReader;
+    
+    let file = File::open(path)
+        .map_err(|e| anyhow::anyhow!("cannot open sample: {}", e))?;
+    let reader = BufReader::new(file);
+    let source = Decoder::new(reader)
+        .map_err(|e| anyhow::anyhow!("cannot decode sample: {}", e))?;
+    
+    // Spawn a thread to play the sample (fire and forget)
+    std::thread::spawn(move || {
+        if let Ok((_stream, handle)) = OutputStream::try_default() {
+            if let Ok(sink) = Sink::try_new(&handle) {
+                sink.append(source);
+                sink.sleep_until_end();
+            }
+        }
+    });
+    
+    Ok(())
+}
+
 fn db_to_amplitude(db: f32) -> f32 {
     (10.0_f32).powf(db / 20.0)
 }
