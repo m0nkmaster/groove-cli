@@ -116,7 +116,7 @@ pub fn visual_to_tokens_and_pitches(s: &str) -> CompiledPattern {
     match parse_visual_pattern(s) {
         Ok(steps) => compile_tokens_pitches_and_gates(&steps),
         Err(err) => {
-            eprintln!("pattern parse error: {err}");
+            crate::console::warn(format!("pattern parse error: {err}"));
             let mut compiled_steps: Vec<CompiledStep> = Vec::new();
             let mut triggers: Vec<bool> = Vec::new();
             let mut pitches: Vec<Option<i32>> = Vec::new();
@@ -425,5 +425,23 @@ mod tests {
     fn no_probability_is_none() {
         let compiled = visual_to_tokens_and_pitches("x . x");
         assert_eq!(compiled.steps[0].events[0].probability, None);
+    }
+
+    #[test]
+    fn parse_error_is_reported_via_console_warn() {
+        let sub = crate::console::subscribe();
+
+        // `^` is not valid visual pattern syntax; this must trigger the fallback path.
+        let _compiled = visual_to_tokens_and_pitches("x^..............."); // 16-ish chars, but invalid
+
+        let msgs = sub.drain();
+        assert!(
+            msgs.iter().any(|m| {
+                m.level == crate::console::Level::Warn
+                    && m.text.contains("pattern parse error")
+                    && m.text.contains('^')
+            }),
+            "expected a warn log containing the parse error; got: {msgs:?}"
+        );
     }
 }

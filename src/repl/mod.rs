@@ -14,9 +14,9 @@ use crate::model::track::{Track, TrackPlayback};
 use crate::pattern::scripted::PatternEngine;
 use crate::storage::song as song_io;
 
-mod completer;
+pub mod completer;
 mod browser;
-mod style;
+pub mod style;
 
 use completer::GrooveHelper;
 use browser::{browse_samples, BrowserResult};
@@ -70,10 +70,19 @@ pub fn run_repl(song: &mut Song) -> Result<()> {
     Ok(())
 }
 
-#[allow(dead_code)]
 enum Output {
     None,
     Text(String),
+}
+
+/// Handle a command line from the TUI (public API).
+/// Returns Ok(Some(text)) for output, Ok(None) for no output, Err for errors.
+pub fn handle_line_for_tui(song: &mut Song, line: &str) -> Result<Option<String>> {
+    match handle_line(song, line) {
+        Ok(Output::None) => Ok(None),
+        Ok(Output::Text(t)) => Ok(Some(t)),
+        Err(e) => Err(e),
+    }
 }
 
 fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
@@ -373,8 +382,7 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
                 }).collect(),
             };
             
-            println!("Generating patterns for '{}'...", description);
-            
+            // Note: No println here - it corrupts TUI display
             match suggest_patterns(&config, &description, &context) {
                 Ok(patterns) => {
                     let mut output = String::from("Suggestions:\n");
@@ -1130,8 +1138,7 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
                 }).collect(),
             };
             
-            println!("  {} generating...", EMOJI_SPARKLE);
-            
+            // Note: No println here - it corrupts TUI display
             match suggest_patterns(&config, &description, &context) {
                 Ok(patterns) => {
                     if let Some(pattern) = patterns.first() {
@@ -1727,7 +1734,8 @@ mod tests {
             tracks: vec![
                 LiveTrackSnapshot { name: "Kick".into(), token_index: 2, pattern: vec![true,false,true,false] },
                 LiveTrackSnapshot { name: "Snare".into(), token_index: 2, pattern: vec![false,false,true,false] },
-            ]
+            ],
+            global_step: 2,
         };
 
         let grid = render_live_grid(&song, &snap);
@@ -1745,7 +1753,8 @@ mod tests {
             tracks: vec![
                 LiveTrackSnapshot { name: "A".into(), token_index: 0, pattern: vec![true,false] },
                 LiveTrackSnapshot { name: "B".into(), token_index: 1, pattern: vec![true,true] },
-            ]
+            ],
+            global_step: 0,
         };
         let out = render_live_grid_from_snapshot(&snap);
         assert!(out.contains("1 A"));

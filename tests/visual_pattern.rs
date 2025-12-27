@@ -134,3 +134,15 @@ fn ignores_comments() {
     assert!(matches!(steps[2], Step::Rest));
     assert!(matches!(steps[3], Step::Hit(_)));
 }
+
+#[test]
+fn parses_pitch_offset_pattern() {
+    let pattern = "x+0.x+3.x+7.x+10.x+12.x+10.x+7.x+3.";
+    let steps = parse_visual_pattern(pattern).expect("parse");
+    println!("Pattern: {}", pattern);
+    println!("Step count: {}", steps.len());
+    for (i, step) in steps.iter().enumerate() {
+        println!("  {}: {:?}", i, step);
+    }
+    assert_eq!(steps.len(), 16);
+}

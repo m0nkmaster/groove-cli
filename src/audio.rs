@@ -60,6 +60,8 @@ pub struct LiveTrackSnapshot {
 #[derive(Clone, Debug)]
 pub struct LiveSnapshot {
     pub tracks: Vec<LiveTrackSnapshot>,
+    /// Global step position (0-indexed) for synchronized display
+    pub global_step: usize,
 }
 
 fn live_state_cell() -> &'static Mutex<Option<LiveSnapshot>> {
@@ -106,21 +108,22 @@ pub fn play_song(song: &Song) -> Result<()> {
         return Err(anyhow!("no playable samples"));
     }
 
-    let names: Vec<String> = cfg.tracks.iter().map(|l| l.name.clone()).collect();
     let (tx, rx) = mpsc::channel::<ControlMsg>();
     std::thread::spawn(move || {
         let (_stream, stream_handle) = match OutputStream::try_default().context("opening audio output") {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("audio error: {}", e);
+                crate::console::error(format!("audio error: {}", e));
                 return;
             }
         };
-        println!("sequencing: {}", names.join(", "));
         let mut current = cfg;
         // Build per-track runtime state
         let mut rt = build_runtime(&current);
         let start = Instant::now();
+        // Global step counter for synchronized display
+        let mut global_step: usize = 0;
+        let mut next_global_step_time = start;
         let mut end_deadline: Option<Instant> = if current.repeat {
             None
         } else {
@@ -149,7 +152,7 @@ pub fn play_song(song: &Song) -> Result<()> {
                         for track in &mut rt {
                             stop_track_voices(track);
                         }
-                        rt = merge_runtime_preserving_phase(&current, &new_cfg, &rt, now_u);
+                        rt = merge_runtime_preserving_phase(&current, &new_cfg, &rt, now_u, global_step, next_global_step_time);
                         current = new_cfg;
                         // reset end deadline based on new config
                         end_deadline = if current.repeat { None } else {
@@ -246,8 +249,15 @@ pub fn play_song(song: &Song) -> Result<()> {
                 process_pending_ratchets(&stream_handle, tr, after_triggers);
             }
 
+            // Advance global step counter based on time
+            let global_step_period = base_step_period(current.bpm, 4); // 16th notes (div=4)
+            while after_triggers >= next_global_step_time {
+                global_step += 1;
+                next_global_step_time += global_step_period;
+            }
+
             // Update live snapshot for REPL display
-            update_live_snapshot(&current, &rt);
+            update_live_snapshot(&current, &rt, global_step.saturating_sub(1));
 
             // Sleep until the next nearest event to reduce CPU
             let next_step_due = rt.iter().map(|t| t.next_time).min();
@@ -351,7 +361,7 @@ fn build_config(song: &Song) -> SequencerConfig {
         let bytes = match std::fs::read(path) {
             Ok(b) => b,
             Err(e) => {
-                eprintln!("warning: skipping track '{}': {}", t.name, e);
+                crate::console::warn(format!("warning: skipping track '{}': {}", t.name, e));
                 continue;
             }
         };
@@ -443,7 +453,10 @@ fn trigger_voice(
     let reader = BufReader::new(cursor);
     let decoded = match Decoder::new(reader) {
         Ok(s) => s,
-        Err(e) => { eprintln!("audio decode error: {}", e); return; }
+        Err(e) => {
+            crate::console::error(format!("audio decode error: {}", e));
+            return;
+        }
     };
     
     let speed = pitch_semitones_to_speed(pitch);
@@ -482,7 +495,7 @@ fn trigger_voice(
             );
             tr.voices.push(VoiceHandle { sink, stop_at });
         }
-        Err(e) => eprintln!("audio error: {}", e),
+        Err(e) => crate::console::error(format!("audio error: {}", e)),
     }
 }
 
@@ -507,7 +520,10 @@ fn process_pending_ratchets(
         let reader = BufReader::new(cursor);
         let decoded = match Decoder::new(reader) {
             Ok(s) => s,
-            Err(e) => { eprintln!("audio decode error: {}", e); continue; }
+            Err(e) => {
+                crate::console::error(format!("audio decode error: {}", e));
+                continue;
+            }
         };
         
         let speed = pitch_semitones_to_speed(ratchet.pitch);
@@ -615,6 +631,8 @@ fn merge_runtime_preserving_phase(
     new_cfg: &SequencerConfig,
     old_rt: &[TrackRuntime],
     now: Instant,
+    _global_step: usize,
+    next_global_step_time: Instant,
 ) -> Vec<TrackRuntime> {
     use std::collections::HashMap;
     // We match by position/name from the previous config; if ordering changes,
@@ -660,8 +678,23 @@ fn merge_runtime_preserving_phase(
                 rng: old_rt.rng.clone(), // Preserve RNG state
             });
         } else {
-            // New track: schedule from next token boundary
+            // New track: sync to first existing track's phase
             let track_idx = out.len();
+            let pattern_len = t.pattern.len().max(1);
+            
+            // Find the first existing track to sync with
+            let (synced_token_index, synced_next_time) = if let Some(first_rt) = out.first() {
+                // Sync to first track's current position (scaled to our pattern length)
+                let first_pos = first_rt.token_index;
+                let first_len = first_rt.pattern.len().max(1);
+                // Calculate equivalent position in our pattern
+                let our_pos = (first_pos * pattern_len / first_len) % pattern_len;
+                (our_pos, first_rt.next_time)
+            } else {
+                // No existing tracks - start at beginning
+                (0, next_global_step_time)
+            };
+            
             out.push(TrackRuntime {
                 data: t.data.clone(),
                 gain: t.gain,
@@ -669,8 +702,8 @@ fn merge_runtime_preserving_phase(
                 pattern: t.pattern.clone(),
                 delay: t.delay.clone(),
                 base_period: new_period,
-                next_time: now + new_period,
-                token_index: 0,
+                next_time: synced_next_time,
+                token_index: synced_token_index,
                 muted: t.muted,
                 div: t.div,
                 playback: t.playback,
@@ -700,18 +733,27 @@ fn time_until_next(now: Instant, next_time: Instant, period: Duration) -> Durati
 // --- Swing helpers (pure, testable) ---
 // moved to audio::timing
 
-fn update_live_snapshot(cfg: &SequencerConfig, rt: &[TrackRuntime]) {
+fn update_live_snapshot(cfg: &SequencerConfig, rt: &[TrackRuntime], global_step: usize) {
     let mut tracks = Vec::with_capacity(cfg.tracks.len());
     for (i, t) in cfg.tracks.iter().enumerate() {
         if let Some(r) = rt.get(i) {
+            // token_index points to the NEXT step to play, so subtract 1 to show current
+            let len = r.pattern.len();
+            let display_index = if len == 0 {
+                0
+            } else if r.token_index == 0 {
+                len - 1  // wrap around
+            } else {
+                (r.token_index - 1) % len
+            };
             tracks.push(LiveTrackSnapshot {
                 name: t.name.clone(),
-                token_index: if r.pattern.is_empty() { 0 } else { r.token_index % r.pattern.len() },
+                token_index: display_index,
                 pattern: r.pattern.clone(),
             });
         }
     }
-    let snap = LiveSnapshot { tracks };
+    let snap = LiveSnapshot { tracks, global_step };
     if let Ok(mut guard) = live_state_cell().lock() {
         *guard = Some(snap);
     }

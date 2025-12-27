@@ -4,6 +4,8 @@ mod repl;
 mod storage;
 mod pattern;
 mod audio;
+mod console;
+mod tui;
 
 use anyhow::Result;
 use clap::{Arg, ArgAction, Command};
@@ -33,6 +35,12 @@ fn cli() -> Command {
                 .action(ArgAction::SetTrue)
                 .help("Reduce startup banner output"),
         )
+        .arg(
+            Arg::new("repl")
+                .long("repl")
+                .action(ArgAction::SetTrue)
+                .help("Start in classic REPL mode instead of TUI"),
+        )
 }
 
 fn main() -> Result<()> {
@@ -50,28 +58,35 @@ fn main() -> Result<()> {
         model::song::Song::default()
     };
 
-    if !matches.get_flag("quiet") {
-        println!("♪ groove — type ? for help");
+    // Classic REPL mode (--repl flag)
+    if matches.get_flag("repl") {
+        if !matches.get_flag("quiet") {
+            println!("♪ groove — type ? for help");
+        }
+
+        // If a song file exists in CWD (song.yaml preferred) or was opened, watch it for changes
+        let watch_path: Option<PathBuf> = if let Some(path) = matches.get_one::<String>("open") {
+            Some(PathBuf::from(path))
+        } else {
+            let yaml = PathBuf::from("song.yaml");
+            let yml = PathBuf::from("song.yml");
+            if yaml.exists() { Some(yaml) }
+            else if yml.exists() { Some(yml) }
+            else { None }
+        };
+
+        if let Some(song_path) = watch_path {
+            println!("watching: {}", song_path.display());
+            start_watcher(song_path.clone());
+            start_polling(song_path);
+        }
+
+        repl::run_repl(&mut song)?;
+        return Ok(());
     }
 
-    // If a song file exists in CWD (song.yaml preferred) or was opened, watch it for changes
-    let watch_path: Option<PathBuf> = if let Some(path) = matches.get_one::<String>("open") {
-        Some(PathBuf::from(path))
-    } else {
-        let yaml = PathBuf::from("song.yaml");
-        let yml = PathBuf::from("song.yml");
-        if yaml.exists() { Some(yaml) }
-        else if yml.exists() { Some(yml) }
-        else { None }
-    };
-    if let Some(song_path) = watch_path {
-        println!("watching: {}", song_path.display());
-        start_watcher(song_path.clone());
-        // Polling fallback for editors that use atomic rename or missed events
-        start_polling(song_path);
-    }
-
-    repl::run_repl(&mut song)?;
+    // Default: TUI mode
+    tui::run(song)?;
 
     Ok(())
 }

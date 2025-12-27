@@ -29,14 +29,16 @@ pub const PATTERN_ACCENT: char = '◉';
 
 /// Convert a visual pattern (x...) to pretty display (●···)
 pub fn prettify_pattern(pattern: &str) -> String {
+    // Keep formatting (whitespace, separators, modifiers) but replace hit/rest glyphs
+    // with prettier symbols for display.
     pattern
         .chars()
         .map(|c| match c {
-            'x' => PATTERN_HIT,
+            'x' | '1' | '*' => PATTERN_HIT,
             'X' => PATTERN_ACCENT,
             '.' => PATTERN_REST,
-            ' ' => ' ',
-            _ => c,
+            '_' => '─',
+            other => other,
         })
         .collect()
 }

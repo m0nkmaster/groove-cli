@@ -422,6 +422,92 @@ impl Validator for GrooveHelper {}
 
 impl Helper for GrooveHelper {}
 
+/// Completion result for TUI mode
+pub struct Completion {
+    /// Display text for the completion
+    pub display: String,
+    /// Text to insert when selected
+    pub replacement: String,
+    /// Start position in the line where replacement begins
+    pub start: usize,
+}
+
+/// Simple completion API for TUI mode.
+/// Returns a list of possible completions for the given line at the cursor position.
+pub fn complete_for_tui(line: &str, pos: usize) -> Vec<Completion> {
+    let helper = GrooveHelper::new();
+    let line_to_pos = &line[..pos.min(line.len())];
+    
+    // Check for sample completion: "trackname ~ query"
+    if let Some((start, query)) = find_tilde_sample_context(line_to_pos) {
+        let tilde_pos = line_to_pos.find('~').unwrap_or(start);
+        return helper.fuzzy_match_samples(&query)
+            .into_iter()
+            .take(10)
+            .map(|(_, path)| Completion {
+                display: shorten_sample_path(&path),
+                replacement: format!(" {}", path),
+                start: tilde_pos + 1,
+            })
+            .collect();
+    }
+    
+    // Check for track name completion
+    let words: Vec<&str> = line_to_pos.split_whitespace().collect();
+    let track_names = super::get_track_names();
+    
+    // Completing first word - could be command or track name
+    if words.is_empty() || (words.len() == 1 && !line_to_pos.ends_with(' ')) {
+        let prefix = words.first().copied().unwrap_or("");
+        let prefix_lower = prefix.to_lowercase();
+        
+        let mut completions = Vec::new();
+        
+        // Add matching commands
+        for cmd in COMMANDS {
+            if cmd.starts_with(&prefix_lower) {
+                completions.push(Completion {
+                    display: cmd.to_string(),
+                    replacement: cmd.to_string(),
+                    start: 0,
+                });
+            }
+        }
+        
+        // Add matching track names
+        for name in &track_names {
+            if name.to_lowercase().starts_with(&prefix_lower) {
+                completions.push(Completion {
+                    display: name.clone(),
+                    replacement: name.clone(),
+                    start: 0,
+                });
+            }
+        }
+        
+        return completions;
+    }
+    
+    // Track subcommand completion (after track name)
+    if !words.is_empty() {
+        let first = words[0].to_lowercase();
+        let is_track = track_names.iter().any(|t| t.to_lowercase() == first);
+        
+        if is_track && words.len() == 1 && line_to_pos.ends_with(' ') {
+            let subcommands = vec!["mute", "unmute", "solo", "delay", "gen", "ai", ">", "~"];
+            return subcommands.into_iter()
+                .map(|cmd| Completion {
+                    display: cmd.to_string(),
+                    replacement: cmd.to_string(),
+                    start: pos,
+                })
+                .collect();
+        }
+    }
+    
+    Vec::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

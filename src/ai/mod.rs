@@ -21,7 +21,7 @@ impl Default for AiConfig {
         
         Self {
             api_key: env::var("OPENAI_API_KEY").ok(),
-            model: "gpt-4o-mini".to_string(),
+            model: env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-5.2".to_string()),
         }
     }
 }
@@ -92,106 +92,122 @@ impl Default for PatternContext {
     }
 }
 
+/// Check if a track name suggests a melodic instrument
+fn is_melodic_track(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower.contains("synth") 
+        || lower.contains("lead") 
+        || lower.contains("melody")
+        || lower.contains("bass")
+        || lower.contains("arp")
+        || lower.contains("pad")
+        || lower.contains("keys")
+        || lower.contains("piano")
+}
+
+/// Check if a pattern has pitch modifiers
+fn has_pitch_modifiers(pattern: &str) -> bool {
+    pattern.contains('+') || pattern.contains('-')
+}
+
 /// Generate pattern suggestions based on a description.
 pub fn suggest_patterns(config: &AiConfig, description: &str, context: &PatternContext) -> Result<Vec<String>> {
-    // Try keyword-based patterns first for reliability
-    if let Some(pattern) = keyword_pattern(description, context.steps) {
-        return Ok(vec![pattern]);
-    }
-    
     let api_key = config.api_key.as_ref()
         .ok_or_else(|| anyhow!("OPENAI_API_KEY not set in .env"))?;
     
     let instructions = build_instructions(context);
     let input = build_input(description, context);
+    let is_melodic = is_melodic_track(&context.target_track);
     
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
     
-    let request = ResponsesRequest {
-        model: config.model.clone(),
-        input,
-        instructions,
-        max_output_tokens: 100,
-        store: false,
-    };
+    // Try up to 3 times for melodic tracks if AI doesn't use pitch modifiers
+    let max_attempts = if is_melodic { 3 } else { 1 };
     
-    let response = client
-        .post("https://api.openai.com/v1/responses")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&request)
-        .send()
-        .map_err(|e| anyhow!("AI request failed: {}", e))?;
-    
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().unwrap_or_default();
-        return Err(anyhow!("OpenAI API error {}: {}", status, body));
+    for attempt in 0..max_attempts {
+        let request = ResponsesRequest {
+            model: config.model.clone(),
+            input: if attempt > 0 {
+                format!("{}\n\nPREVIOUS ATTEMPT FAILED: You did not use pitch modifiers. You MUST use x+N or x-N syntax for melodic patterns. Try again.", input)
+            } else {
+                input.clone()
+            },
+            instructions: instructions.clone(),
+            max_output_tokens: 200, // Increased for longer melodic patterns
+            store: false,
+        };
+        
+        let response = client
+            .post("https://api.openai.com/v1/responses")
+            .header("Authorization", format!("Bearer {}", api_key))
+            .header("Content-Type", "application/json")
+            .json(&request)
+            .send()
+            .map_err(|e| anyhow!("AI request failed: {}", e))?;
+        
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().unwrap_or_default();
+            return Err(anyhow!("OpenAI API error {}: {}", status, body));
+        }
+        
+        let result: ResponsesResponse = response.json()
+            .map_err(|e| anyhow!("Failed to parse OpenAI response: {}", e))?;
+        
+        let content = result.output.first()
+            .and_then(|o| o.content.as_ref())
+            .and_then(|c| c.first())
+            .and_then(|c| c.text.clone())
+            .unwrap_or_default();
+        
+        let patterns = extract_patterns(&content);
+        
+        if patterns.is_empty() {
+            continue;
+        }
+        
+        // For melodic tracks, require pitch modifiers
+        if is_melodic {
+            let melodic_patterns: Vec<String> = patterns.into_iter()
+                .filter(|p| has_pitch_modifiers(p))
+                .collect();
+            
+            if !melodic_patterns.is_empty() {
+                return Ok(melodic_patterns);
+            }
+            // Continue to next attempt
+        } else {
+            return Ok(patterns);
+        }
     }
     
-    let result: ResponsesResponse = response.json()
-        .map_err(|e| anyhow!("Failed to parse OpenAI response: {}", e))?;
-    
-    // Extract text from response
-    let content = result.output.first()
-        .and_then(|o| o.content.as_ref())
-        .and_then(|c| c.first())
-        .and_then(|c| c.text.clone())
-        .unwrap_or_default();
-    
-    // Parse patterns from response
-    let patterns = extract_patterns(&content);
-    
-    if patterns.is_empty() {
-        Err(anyhow!("No valid patterns in AI response: {}", content))
-    } else {
-        Ok(patterns)
-    }
+    Err(anyhow!("AI failed to generate melodic pattern with pitch modifiers after {} attempts. The AI keeps returning rhythm-only patterns.", max_attempts))
 }
 
 /// Build the system instructions with full context about what we're doing.
 fn build_instructions(context: &PatternContext) -> String {
-    format!(r#"You are a pattern generator for groove-cli, a command-line step sequencer for creating music.
+    format!(r#"You generate patterns for groove-cli (a step sequencer). Output ONLY the pattern string.
 
-## WHAT YOU'RE CREATING
-You generate step sequences for tracks in a song. Each track plays a sample (audio file) according to its pattern. The patterns loop continuously to create rhythmic music.
+PATTERN SYNTAX (each character = 1 step):
+- x = trigger at base pitch
+- . = rest  
+- x+N = trigger transposed up N semitones (e.g. x+7 = fifth, x+12 = octave)
+- x-N = trigger transposed down N semitones
 
-## PATTERN SYNTAX
-Patterns are strings where each character represents one step (typically a 16th note):
-- x or X = trigger/hit (play the sample)
-- . = rest/silence (no sound)
-- _ = tie/sustain (extend previous note)
-- | = bar divider (visual only, ignored by sequencer)
+CRITICAL: For synth/lead/melody/bass tracks, you MUST use pitch modifiers (x+N, x-N) to create actual melodies and progressions. Plain "x" only patterns are WRONG for melodic instruments.
 
-Advanced syntax (optional):
-- X = accented hit (louder)
-- Grouping: (xx..) subdivides into the time of one step
-- Modifiers after x: ^ accent, ~ ghost/soft
+EXAMPLES:
+Arpeggio: x...x+3...x+7...x+12...|x+12...x+7...x+3...x...
+Synthwave: x+7..x+12.x...x+5..|x+3..x+7..x...x+10..
+Bass line: x...x+5..x+7.x...|x-5...x..x+3..x+5..
+Chord prog: x...x+4.x+7...|x+5..x+9.x+12..|x+3..x+7.x+10..|x...x+4.x+7...
 
-## CURRENT SONG
-- BPM: {}
-- Steps per pattern: {}
+BPM: {} | Steps: {}
 
-## INSTRUMENT HINTS
-The track name often indicates the instrument type:
-- kick, bass, bd = low frequency, rhythmic foundation
-- snare, sd, clap = backbeat, typically beats 2 and 4
-- hat, hh, hihat = high frequency, often busy patterns
-- perc, conga, shaker = auxiliary rhythm
-- lead, synth, melody = melodic content
-- pad, strings = sustained, sparse patterns
-
-## MUSICAL GUIDELINES
-- Patterns should be musically coherent and complement existing tracks
-- Consider the BPM: faster tempos often need simpler patterns
-- Leave space - not every step needs a hit
-- Syncopation creates groove
-- The pattern must be EXACTLY {} characters long
-
-Reply with ONLY the pattern string. No explanation, no quotes, no markdown."#,
-        context.bpm, context.steps, context.steps
+Reply with ONLY the pattern. No explanation."#,
+        context.bpm, context.steps
     )
 }
 
@@ -248,10 +264,23 @@ fn build_input(description: &str, context: &PatternContext) -> String {
     }
     
     // The actual request
+    let track_lower = context.target_track.to_lowercase();
+    let is_melodic = track_lower.contains("synth") 
+        || track_lower.contains("lead") 
+        || track_lower.contains("melody")
+        || track_lower.contains("bass")
+        || track_lower.contains("arp")
+        || track_lower.contains("pad");
+    
+    let melodic_hint = if is_melodic {
+        "\n\nIMPORTANT: This is a melodic instrument. You MUST use pitch modifiers (x+N, x-N) to create an actual melody/progression. Do NOT output plain x patterns."
+    } else {
+        ""
+    };
+    
     input.push_str(&format!(
-        "Create a {}-step pattern for track \"{}\".\nDescription: {}\n\n\
-        Consider how this pattern will work with the existing tracks above.",
-        context.steps, context.target_track, description
+        "Create a {}-step pattern for track \"{}\".\nRequest: {}{}",
+        context.steps, context.target_track, description, melodic_hint
     ));
     
     input
@@ -317,7 +346,14 @@ fn adjust_pattern_length(pattern: &str, steps: usize) -> String {
 fn extract_patterns(response: &str) -> Vec<String> {
     response
         .lines()
-        .map(|line| line.trim())
+        .map(|line| {
+            // Clean the line: trim whitespace, remove quotes/backticks
+            line.trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .trim_matches('`')
+                .trim()
+        })
         .filter(|line| !line.is_empty())
         .filter(|line| is_valid_pattern(line))
         .map(|s| s.to_string())
@@ -327,8 +363,8 @@ fn extract_patterns(response: &str) -> Vec<String> {
 
 /// Check if a line looks like a valid pattern.
 fn is_valid_pattern(s: &str) -> bool {
-    // Must be reasonable length (4-64 chars, no spaces)
-    if s.len() < 4 || s.len() > 64 || s.contains(' ') {
+    // Must be reasonable length (4-128 chars, no spaces)
+    if s.len() < 4 || s.len() > 128 || s.contains(' ') {
         return false;
     }
     // Must contain at least one hit (x/X)
@@ -337,7 +373,8 @@ fn is_valid_pattern(s: &str) -> bool {
         return false;
     }
     // All chars must be valid pattern syntax (no spaces)
-    s.chars().all(|c| matches!(c, 'x' | 'X' | '.' | '_' | '|' | '^' | '~' | '(' | ')'))
+    // Include digits and +/- for pitch modifiers like x+7, x-3
+    s.chars().all(|c| matches!(c, 'x' | 'X' | '.' | '_' | '|' | '^' | '~' | '(' | ')' | '+' | '-' | '0'..='9'))
 }
 
 #[cfg(test)]
