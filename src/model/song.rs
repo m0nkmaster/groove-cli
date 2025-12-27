@@ -27,6 +27,7 @@ impl Default for Song {
 
 impl Song {
     pub fn repeat_on(&self) -> bool { self.repeat }
+    #[allow(dead_code)]
     pub fn list(&self) -> String {
         if self.tracks.is_empty() {
             return "[no tracks]".to_string();

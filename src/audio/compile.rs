@@ -61,6 +61,7 @@ pub struct CompiledStep {
     pub hold_steps: usize,          // How many steps to sustain (for gate mode)
 }
 
+#[allow(dead_code)]
 impl CompiledStep {
     pub fn rest() -> Self {
         Self { events: Vec::new(), hold_steps: 0 }
@@ -89,6 +90,7 @@ pub struct CompiledPattern {
     pub velocities: Vec<u8>,
 }
 
+#[allow(dead_code)]
 impl CompiledPattern {
     pub fn empty() -> Self {
         Self {

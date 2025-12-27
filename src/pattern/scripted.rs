@@ -38,6 +38,7 @@ impl PatternEngine {
     }
     
     /// Evaluate a script with variables in scope (e.g., bar number, BPM).
+    #[allow(dead_code)]
     pub fn eval_with_context(&self, script: &str, bar: i64, bpm: i64) -> Result<String> {
         let mut scope = Scope::new();
         scope.push("bar", bar);

@@ -16,13 +16,19 @@ use crate::storage::song as song_io;
 
 mod completer;
 mod browser;
+mod style;
+
 use completer::GrooveHelper;
 use browser::{browse_samples, BrowserResult};
+use style::*;
 
 pub fn run_repl(song: &mut Song) -> Result<()> {
     let helper = GrooveHelper::new();
     let mut rl = Editor::<GrooveHelper, DefaultHistory>::new()?;
     rl.set_helper(Some(helper));
+    
+    // Initialize track names for autocomplete
+    update_track_names(song);
     
     // Install external printer so background logs don't break the input line
     if let Ok(pr) = rl.create_external_printer() {
@@ -35,8 +41,8 @@ pub fn run_repl(song: &mut Song) -> Result<()> {
     }
     let mut _line_no: usize = 1;
     loop {
-        let prompt = "> ";
-        match rl.readline(prompt) {
+        let prompt = format_prompt(song.bpm, crate::audio::is_playing());
+        match rl.readline(&prompt) {
             Ok(line) => {
                 if line.trim().is_empty() {
                     continue;
@@ -45,12 +51,12 @@ pub fn run_repl(song: &mut Song) -> Result<()> {
                 match handle_line(song, &line) {
                     Ok(Output::None) => {}
                     Ok(Output::Text(t)) => println!("{}", t),
-                    Err(e) => eprintln!("error: {}", e),
+                    Err(e) => eprintln!("{}", e),
                 }
                 _line_no += 1;
             }
             Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => {
-                println!("bye");
+                println!("{}", goodbye());
                 break;
             }
             Err(err) => {
@@ -76,8 +82,15 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
 
 fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Result<Output> {
     let l = line.trim();
+    
+    // Meta commands
     if let Some(rest) = l.strip_prefix(':') {
         return handle_meta(song, rest);
+    }
+    
+    // Help shortcut
+    if l == "?" {
+        return Ok(Output::Text(help_box()));
     }
 
     if allow_chain {
@@ -97,15 +110,71 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
         }
     }
 
+    // Check for new-style commands first
+    
+    // Just a number = set BPM
+    if let Ok(bpm) = l.parse::<u32>() {
+        if bpm > 0 && bpm <= 999 {
+            song.bpm = bpm;
+            crate::audio::reload_song(song);
+            return Ok(Output::Text(tempo(bpm)));
+        }
+    }
+    
+    // + trackname = add track
+    if let Some(name) = l.strip_prefix('+').map(|s| s.trim()) {
+        if !name.is_empty() && !name.contains(' ') {
+            // Check for duplicate
+            let name_lower = name.to_lowercase();
+            if song.tracks.iter().any(|t| t.name.to_lowercase() == name_lower) {
+                bail!("  {} track \"{}\" already exists", EMOJI_THINK, name);
+            }
+            song.tracks.push(Track::new(name));
+            crate::audio::reload_song(song);
+            update_track_names(song);
+            return Ok(Output::Text(success(&format!("added {}", name))));
+        } else if name.contains(' ') {
+            bail!("  {} track names must be single words (no spaces)", EMOJI_THINK);
+        }
+    }
+    
+    // - trackname = remove track
+    if let Some(name) = l.strip_prefix('-').map(|s| s.trim()) {
+        if !name.is_empty() {
+            let position = parse_track_index(song, name)?;
+            let removed = song.tracks.remove(position);
+            crate::audio::reload_song(song);
+            update_track_names(song);
+            return Ok(Output::Text(success(&format!("removed {}", removed.name))));
+        }
+    }
+    
+    // Try track-first syntax: trackname ...
+    if let Some(result) = try_track_first_command(song, l)? {
+        return Ok(result);
+    }
+
     // Simple commands for MVP scaffolding
     let mut parts = shlex::Shlex::new(l);
     let cmd: String = parts.next().unwrap_or_default();
     match cmd.as_str() {
+        // New aliases
+        "go" => {
+            crate::audio::play_song(song)?;
+            return Ok(Output::Text(playing()));
+        }
+        "." => {
+            crate::audio::stop();
+            return Ok(Output::Text(stopped()));
+        }
+        "ls" => {
+            return Ok(Output::Text(format_track_list(song)));
+        }
         "bpm" => {
             if let Some(v) = parts.next() {
                 song.bpm = v.parse()?;
                 crate::audio::reload_song(song);
-                Ok(Output::Text(format!("bpm set to {}", song.bpm)))
+                Ok(Output::Text(tempo(song.bpm)))
             } else {
                 bail!("usage: bpm <number>");
             }
@@ -131,19 +200,28 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
         "track" => {
             let name: String = parts.next().unwrap_or_default();
             if name.is_empty() {
-                bail!("usage: track \"Name\"");
+                bail!("usage: + trackname");
+            }
+            if name.contains(' ') {
+                bail!("  {} track names must be single words (no spaces)", EMOJI_THINK);
+            }
+            // Check for duplicate
+            let name_lower = name.to_lowercase();
+            if song.tracks.iter().any(|t| t.name.to_lowercase() == name_lower) {
+                bail!("  {} track \"{}\" already exists", EMOJI_THINK, name);
             }
             song.tracks.push(Track::new(name.as_str()));
             crate::audio::reload_song(song);
-            Ok(Output::Text(format!("added track {}", name)))
+            update_track_names(song);
+            Ok(Output::Text(success(&format!("added {}", name))))
         }
         "pattern" => {
             let idx = parts
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: pattern <track_idx>[.var] \"pattern\""))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: trackname x...x..."))?;
             let pat = parts
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: pattern <track_idx>[.var] \"pattern\""))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: trackname x...x..."))?;
             
             // Check for variation notation: "1.a", "kick.fill"
             let (track_idx, variation) = if let Some(dot_pos) = idx.find('.') {
@@ -153,35 +231,37 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
                 (idx.to_string(), None)
             };
             
-            let msg = {
-                let (i, track) = track_mut(song, &track_idx)?;
+            let (name, pat_display) = {
+                let (_, track) = track_mut(song, &track_idx)?;
+                let track_name = track.name.clone();
                 if let Some(var_name) = variation {
-                    track.variations.insert(var_name.clone(), Pattern::visual(pat));
-                    format!("track {} variation '{}' set", i, var_name)
+                    track.variations.insert(var_name.clone(), Pattern::visual(&pat));
+                    (format!("{}.{}", track_name, var_name), pat)
                 } else {
-                    track.pattern = Some(Pattern::visual(pat));
-                    format!("track {} pattern set", i)
+                    track.pattern = Some(Pattern::visual(&pat));
+                    (track_name, pat)
                 }
             };
             crate::audio::reload_song(song);
-            Ok(Output::Text(msg))
+            Ok(Output::Text(track_pattern(&name, &pat_display)))
         }
         "var" => {
             // Switch track to a different variation: var <track_idx> <variation_name>
             // Or: var <track_idx> (to show current variation and list available)
             let idx = parts
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: var <track_idx> [variation_name|main]"))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: trackname > variation"))?;
             
             if let Some(var_name) = parts.next() {
                 let msg = {
-                    let (i, track) = track_mut(song, &idx)?;
+                    let (_, track) = track_mut(song, &idx)?;
+                    let name = track.name.clone();
                     if var_name == "main" || var_name == "-" {
                         track.current_variation = None;
-                        format!("track {} switched to main pattern", i)
+                        track_variation(&name, "main")
                     } else if track.variations.contains_key(&var_name.to_string()) {
                         track.current_variation = Some(var_name.to_string());
-                        format!("track {} switched to variation '{}'", i, var_name)
+                        track_variation(&name, &var_name)
                     } else {
                         return Err(anyhow::anyhow!(
                             "variation '{}' not found. available: {}",
@@ -194,13 +274,14 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
                 Ok(Output::Text(msg))
             } else {
                 // List variations
-                let (i, track) = track_mut(song, &idx)?;
+                let (_, track) = track_mut(song, &idx)?;
+                let name = track.name.clone();
                 let current = track.current_variation.as_deref().unwrap_or("main");
                 let vars: Vec<String> = std::iter::once("main".to_string())
                     .chain(track.variations.keys().cloned())
                     .map(|v| if v == current { format!("[{}]", v) } else { v })
                     .collect();
-                Ok(Output::Text(format!("track {} variations: {}", i, vars.join(", "))))
+                Ok(Output::Text(format!("  {}  variations: {}", name, vars.join(", "))))
             }
         }
         "gen" => {
@@ -208,7 +289,7 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
             // Usage: gen <track_idx> `script` or gen `script` (preview only)
             let first = parts
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: gen <track_idx> `script` or gen `script`"))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: trackname gen euclid(5,16)"))?;
             
             let engine = PatternEngine::new();
             
@@ -217,22 +298,23 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
                 // Preview mode: just evaluate and print
                 let script = first.trim_matches(|c| c == '`' || c == '"');
                 match engine.eval(script) {
-                    Ok(pattern) => Ok(Output::Text(format!("generated: {}", pattern))),
+                    Ok(pattern) => Ok(Output::Text(track_generated("", &pattern))),
                     Err(e) => Err(anyhow::anyhow!("script error: {}", e)),
                 }
             } else {
                 // Apply to track
                 let script = parts
                     .next()
-                    .ok_or_else(|| anyhow::anyhow!("usage: gen <track_idx> `script`"))?;
+                    .ok_or_else(|| anyhow::anyhow!("usage: trackname gen euclid(5,16)"))?;
                 let script = script.trim_matches(|c| c == '`' || c == '"');
                 
                 match engine.eval(script) {
                     Ok(pattern) => {
-                        let (i, track) = track_mut(song, &first)?;
+                        let (_, track) = track_mut(song, &first)?;
+                        let name = track.name.clone();
                         track.pattern = Some(Pattern::visual(&pattern));
                         crate::audio::reload_song(song);
-                        Ok(Output::Text(format!("track {} pattern: {}", i, pattern)))
+                        Ok(Output::Text(track_generated(&name, &pattern)))
                     }
                     Err(e) => Err(anyhow::anyhow!("script error: {}", e)),
                 }
@@ -298,10 +380,10 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
         "sample" => {
             let idx = parts
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: sample <track_idx> \"path\""))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: trackname ~ samplepath"))?;
             let p = parts
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: sample <track_idx> \"path\""))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: trackname ~ samplepath"))?;
             
             // Resolve sample path (supports shortcuts like "909/kick")
             let resolved = resolve_sample_path(&p);
@@ -311,24 +393,17 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
             if !path.exists() {
                 // Try to find similar samples
                 let suggestions = find_similar_samples(&p);
-                let mut msg = format!("sample not found: {}", resolved);
-                if !suggestions.is_empty() {
-                    msg.push_str("\n\nDid you mean:");
-                    for s in suggestions.iter().take(5) {
-                        msg.push_str(&format!("\n  {}", s));
-                    }
-                }
-                msg.push_str("\n\nTip: use `samples` to list available samples");
-                return Err(anyhow::anyhow!("{}", msg));
+                return Err(anyhow::anyhow!("{}", not_found_sample(&p, &suggestions)));
             }
             
-            let msg = {
-                let (i, track) = track_mut(song, &idx)?;
+            let name = {
+                let (_, track) = track_mut(song, &idx)?;
+                let track_name = track.name.clone();
                 track.sample = Some(resolved.clone());
-                format!("track {} sample: {}", i, resolved)
+                track_name
             };
             crate::audio::reload_song(song);
-            Ok(Output::Text(msg))
+            Ok(Output::Text(track_sample(&name, &resolved)))
         }
         "samples" => {
             // List available samples with optional filter
@@ -373,64 +448,57 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
                 Err(e) => Err(anyhow::anyhow!("browser error: {}", e)),
             }
         }
-        "list" => Ok(Output::Text(song.list())),
+        "list" => Ok(Output::Text(format_track_list(song))),
         "play" => {
             crate::audio::play_song(song)?;
-            Ok(Output::Text("[play]".into()))
+            Ok(Output::Text(playing()))
         }
         "stop" => {
             crate::audio::stop();
-            Ok(Output::Text("[stop]".into()))
+            Ok(Output::Text(stopped()))
         }
         "save" => {
             let path = parts
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: save \"song.yaml\""))?;
-            song_io::save(song, path)?;
-            Ok(Output::Text("saved".into()))
+                .ok_or_else(|| anyhow::anyhow!("usage: save song.yaml"))?;
+            song_io::save(song, &path)?;
+            Ok(Output::Text(saved(&path)))
         }
         "open" => {
             let path = parts
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: open \"song.yaml\""))?;
-            let s = song_io::open(path)?;
+                .ok_or_else(|| anyhow::anyhow!("usage: open song.yaml"))?;
+            let s = song_io::open(&path)?;
             *song = s;
-            Ok(Output::Text("opened".into()))
+            update_track_names(song);
+            Ok(Output::Text(opened(&path)))
         }
         "delay" => {
             let idx = parts.next().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "usage: delay <track_idx> on|off | time \"1/4\" [fb <0..1>] [mix <0..1>]"
-                )
+                anyhow::anyhow!("usage: trackname delay on|off or trackname delay 1/8 0.4 0.3")
             })?;
-            let (display_idx, track) = track_mut(song, &idx)?;
+            let (_, track) = track_mut(song, &idx)?;
+            let name = track.name.clone();
             let action = parts.next().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "usage: delay <track_idx> on|off | time \"1/4\" [fb <0..1>] [mix <0..1>]"
-                )
+                anyhow::anyhow!("usage: trackname delay on|off or trackname delay 1/8 0.4 0.3")
             })?;
             match action.as_str() {
                 "on" => {
                     track.delay.on = true;
-                    let msg = format!("track {} delay on", display_idx);
-                    let _ = track;
                     crate::audio::reload_song(song);
-                    Ok(Output::Text(msg))
+                    Ok(Output::Text(track_delay(&name, true, None, None, None)))
                 }
                 "off" => {
                     track.delay.on = false;
-                    let msg = format!("track {} delay off", display_idx);
-                    let _ = track;
                     crate::audio::reload_song(song);
-                    Ok(Output::Text(msg))
+                    Ok(Output::Text(track_delay(&name, false, None, None, None)))
                 }
                 "time" => {
                     let time_value = parts.next().ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "usage: delay <track_idx> time \"1/4\" [fb <0..1>] [mix <0..1>]"
-                        )
+                        anyhow::anyhow!("usage: trackname delay 1/8 0.4 0.3")
                     })?;
-                    track.delay.time = time_value;
+                    track.delay.on = true;
+                    track.delay.time = time_value.clone();
                     while let Some(param) = parts.next() {
                         match param.as_str() {
                             "fb" => {
@@ -441,92 +509,100 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
                             }
                             "mix" => {
                                 let val = parts.next().ok_or_else(|| {
-                                    anyhow::anyhow!(
-                                        "delay mix requires a value between 0.0 and 1.0"
-                                    )
+                                    anyhow::anyhow!("delay mix requires a value between 0.0 and 1.0")
                                 })?;
                                 track.delay.mix = parse_unit_range("mix", &val)?;
                             }
                             other => bail!("unknown delay parameter: {}", other),
                         }
                     }
-                    let msg = format!(
-                        "track {} delay time {} fb{:.2} mix{:.2}",
-                        display_idx, track.delay.time, track.delay.feedback, track.delay.mix
-                    );
-                    let _ = track;
+                    let t = track.delay.time.clone();
+                    let fb = track.delay.feedback;
+                    let mix = track.delay.mix;
                     crate::audio::reload_song(song);
-                    Ok(Output::Text(msg))
+                    Ok(Output::Text(track_delay(&name, true, Some(&t), Some(fb), Some(mix))))
                 }
-                _ => {
-                    bail!("usage: delay <track_idx> on|off | time \"1/4\" [fb <0..1>] [mix <0..1>]")
+                // New syntax: trackname delay 1/8 0.4 0.3
+                time_val => {
+                    track.delay.on = true;
+                    track.delay.time = time_val.to_string();
+                    if let Some(fb) = parts.next() {
+                        track.delay.feedback = parse_unit_range("feedback", &fb)?;
+                    }
+                    if let Some(mix) = parts.next() {
+                        track.delay.mix = parse_unit_range("mix", &mix)?;
+                    }
+                    let t = track.delay.time.clone();
+                    let fb = track.delay.feedback;
+                    let mix = track.delay.mix;
+                    crate::audio::reload_song(song);
+                    Ok(Output::Text(track_delay(&name, true, Some(&t), Some(fb), Some(mix))))
                 }
             }
         }
         "mute" => {
             let idx = parts
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: mute <track_idx> [on|off]"))?;
-            let (display_idx, track) = track_mut(song, &idx)?;
+                .ok_or_else(|| anyhow::anyhow!("usage: trackname mute"))?;
+            let (_, track) = track_mut(song, &idx)?;
+            let name = track.name.clone();
             match parts.next() {
                 Some(state) => match state.as_str() {
                     "on" => track.mute = true,
                     "off" => track.mute = false,
-                    _ => bail!("usage: mute <track_idx> [on|off]"),
+                    _ => bail!("usage: trackname mute"),
                 },
                 None => {
                     track.mute = !track.mute;
                 }
             }
-            let msg = format!(
-                "track {} mute {}",
-                display_idx,
-                if track.mute { "on" } else { "off" }
-            );
-            let _ = track;
+            let is_muted = track.mute;
             crate::audio::reload_song(song);
-            Ok(Output::Text(msg))
+            Ok(Output::Text(if is_muted { track_muted(&name) } else { track_unmuted(&name) }))
+        }
+        "unmute" => {
+            let idx = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: trackname unmute"))?;
+            let (_, track) = track_mut(song, &idx)?;
+            let name = track.name.clone();
+            track.mute = false;
+            crate::audio::reload_song(song);
+            Ok(Output::Text(track_unmuted(&name)))
         }
         "solo" => {
             let idx = parts
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: solo <track_idx> [on|off]"))?;
-            let (display_idx, track) = track_mut(song, &idx)?;
+                .ok_or_else(|| anyhow::anyhow!("usage: trackname solo"))?;
+            let (_, track) = track_mut(song, &idx)?;
+            let name = track.name.clone();
             match parts.next() {
                 Some(state) => match state.as_str() {
                     "on" => track.solo = true,
                     "off" => track.solo = false,
-                    _ => bail!("usage: solo <track_idx> [on|off]"),
+                    _ => bail!("usage: trackname solo"),
                 },
                 None => {
                     track.solo = !track.solo;
                 }
             }
-            let msg = format!(
-                "track {} solo {}",
-                display_idx,
-                if track.solo { "on" } else { "off" }
-            );
-            let _ = track;
+            let is_solo = track.solo;
             crate::audio::reload_song(song);
-            Ok(Output::Text(msg))
+            Ok(Output::Text(track_solo(&name, is_solo)))
         }
         "gain" => {
             let idx = parts
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: gain <track_idx> <db>"))?;
-            let (display_idx, track) = track_mut(song, &idx)?;
+                .ok_or_else(|| anyhow::anyhow!("usage: trackname -3db"))?;
+            let (_, track) = track_mut(song, &idx)?;
+            let name = track.name.clone();
             let value = parts
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: gain <track_idx> <db>"))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: trackname -3db"))?;
             track.gain_db = value.parse()?;
-            let msg = format!(
-                "track {} gain set to {:+.1}dB",
-                display_idx, track.gain_db
-            );
-            let _ = track;
+            let db = track.gain_db;
             crate::audio::reload_song(song);
-            Ok(Output::Text(msg))
+            Ok(Output::Text(track_gain(&name, db)))
         }
         "playback" => {
             let idx = parts
@@ -569,15 +645,12 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
         "remove" => {
             let idx = parts
                 .next()
-                .ok_or_else(|| anyhow::anyhow!("usage: remove <track_idx>"))?;
+                .ok_or_else(|| anyhow::anyhow!("usage: - trackname"))?;
             let position = parse_track_index(song, &idx)?;
             let removed = song.tracks.remove(position);
             crate::audio::reload_song(song);
-            Ok(Output::Text(format!(
-                "removed track {} ({})",
-                position + 1,
-                removed.name
-            )))
+            update_track_names(song);
+            Ok(Output::Text(success(&format!("removed {}", removed.name))))
         }
         "clear" => {
             // Clear live region state so next refresh starts from a clean slate
@@ -747,26 +820,23 @@ fn slice_from<'a>(input: &'a str, chars: &[(usize, char)], start: usize, end: us
 
 fn handle_meta(_song: &mut Song, meta: &str) -> Result<Output> {
     match meta.trim() {
-        "help" => Ok(Output::Text(HELP.to_string())),
+        "help" => Ok(Output::Text(help_box())),
         "q" | "quit" | "exit" => {
             // Signal outer loop by returning EOF via error; simpler approach: print and exit process
-            println!("bye");
+            println!("{}", goodbye());
             std::io::stdout().flush().ok();
             std::process::exit(0)
         }
         "doc" => Ok(Output::Text(
-            "Docs: see documentation/user-guide/quickstart.md and documentation/development/DEVELOPMENT.md".into(),
+            "  Docs: see documentation/user-guide/quickstart.md".into(),
         )),
-        "live" => Ok(Output::Text(format!(
-            "live view: {}",
-            if live_view_enabled() { "on" } else { "off" }
-        ))),
+        "live" => Ok(Output::Text(live_view(live_view_enabled()))),
         "live on" => {
             set_live_view(true);
             ensure_live_ticker();
             // force first render
             if let Ok(mut g) = LAST_TOKENS.lock() { *g = None; }
-            Ok(Output::Text("live view on".into()))
+            Ok(Output::Text(live_view(true)))
         }
         "live off" => {
             set_live_view(false);
@@ -783,68 +853,319 @@ fn handle_meta(_song: &mut Song, meta: &str) -> Result<Output> {
             }
             if let Ok(mut p) = PREV_PLAYING.lock() { *p = None; }
             if let Ok(mut s) = LAST_SNAPSHOT.lock() { *s = None; }
-            Ok(Output::Text("live view off".into()))
+            Ok(Output::Text(live_view(false)))
         }
-        _ => Ok(Output::Text("unknown meta command".into())),
+        _ => Ok(Output::Text("  unknown meta command. try ?".into())),
     }
 }
 
-const HELP: &str = r#"Commands:
-  :help                 Show this help
-  :q / :quit            Exit
-  :live [on|off]        Toggle or show live playing view
+// HELP constant removed - now using help_box() from style module
 
-Song:
-  bpm <n>               Set tempo (e.g., 120)
-  steps <n>             Set steps per bar (e.g., 16)
-  swing <percent>       Set swing percent (0..100)
-  play | stop           Start/stop playback
-  save "file.yaml"      Save song to YAML
-  open "file.yaml"      Load song from YAML
+/// Get track names as a vector (for error messages)
+#[allow(dead_code)]
+fn get_track_names_vec(song: &Song) -> Vec<String> {
+    song.tracks.iter().map(|t| t.name.clone()).collect()
+}
 
-Tracks:
-  track "Name"          Add a track
-  remove <idx>          Remove a track
-  list                  List all tracks
-  sample <idx> "path"   Set sample (Tab for autocomplete)
-  samples [filter]      List available samples
-  browse [dir] [idx]    Interactive sample browser
-  preview "path"        Play sample without setting
-  pattern <idx> "..."   Set pattern (x=hit, .=rest)
-  mute <idx> [on|off]   Toggle mute
-  solo <idx> [on|off]   Toggle solo
-  gain <idx> <db>       Set gain in dB
-  playback <idx> <mode> Set mode: gate|mono|one_shot
-  div <idx> <n>         Set step division (4=16ths)
+/// Format the track list with pretty output
+fn format_track_list(song: &Song) -> String {
+    if song.tracks.is_empty() {
+        return "  (no tracks)".to_string();
+    }
+    
+    let mut out = String::new();
+    out.push('\n');
+    
+    for t in &song.tracks {
+        // Mute/solo indicator
+        let status = if t.mute {
+            EMOJI_MUTE
+        } else if t.solo {
+            EMOJI_SOLO
+        } else {
+            EMOJI_UNMUTE
+        };
+        
+        // Pattern display
+        let pattern_str = match &t.pattern {
+            Some(Pattern::Visual(p)) => prettify_pattern(p),
+            None => "·".repeat(16),
+        };
+        
+        // Gain (only show if not 0)
+        let gain_str = if t.gain_db != 0.0 {
+            format!("  {:+.0}db", t.gain_db)
+        } else {
+            String::new()
+        };
+        
+        out.push_str(&format!(
+            "  {:<8} {}  {}{}\n",
+            t.name, status, pattern_str, gain_str
+        ));
+    }
+    
+    out
+}
 
-Variations:
-  pattern <idx>.<var> "..."   Set named variation
-  var <idx> [name|main]       Switch variation
+/// Try to parse track-first command syntax (e.g., "kick x...x...", "kick ~ 909/kick")
+fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>> {
+    let mut parts = shlex::Shlex::new(line);
+    let first = match parts.next() {
+        Some(f) => f,
+        None => return Ok(None),
+    };
+    
+    // Check for track.variation syntax
+    let (track_name, variation) = if let Some(dot_pos) = first.find('.') {
+        let (t, v) = first.split_at(dot_pos);
+        (t.to_string(), Some(v[1..].to_string()))
+    } else {
+        (first.clone(), None)
+    };
+    
+    // Check if first word is a known track name
+    let track_names: Vec<String> = song.tracks.iter().map(|t| t.name.to_lowercase()).collect();
+    if !track_names.contains(&track_name.to_lowercase()) {
+        return Ok(None); // Not a track-first command
+    }
+    
+    let second = parts.next();
+    
+    match second.as_deref() {
+        // Pattern: kick x...x...
+        Some(pat) if looks_like_pattern(pat) => {
+            let (_, track) = track_mut(song, &track_name)?;
+            let name = track.name.clone();
+            if let Some(var_name) = variation {
+                track.variations.insert(var_name.clone(), Pattern::visual(pat));
+                crate::audio::reload_song(song);
+                Ok(Some(Output::Text(track_pattern(&format!("{}.{}", name, var_name), pat))))
+            } else {
+                track.pattern = Some(Pattern::visual(pat));
+                crate::audio::reload_song(song);
+                Ok(Some(Output::Text(track_pattern(&name, pat))))
+            }
+        }
+        // Sample: kick ~ 909/kick or kick ~ samples/kits/harsh 909/High Tom.wav
+        Some("~") => {
+            // Collect all remaining parts as the sample path (handles spaces in path)
+            let sample_parts: Vec<String> = parts.collect();
+            if sample_parts.is_empty() {
+                return Err(anyhow!("usage: trackname ~ samplepath"));
+            }
+            let sample_query = sample_parts.join(" ");
+            let resolved = resolve_sample_path(&sample_query);
+            let path = std::path::Path::new(&resolved);
+            if !path.exists() {
+                let suggestions = find_similar_samples(&sample_query);
+                return Err(anyhow!("{}", not_found_sample(&sample_query, &suggestions)));
+            }
+            let (_, track) = track_mut(song, &track_name)?;
+            let name = track.name.clone();
+            track.sample = Some(resolved.clone());
+            crate::audio::reload_song(song);
+            Ok(Some(Output::Text(track_sample(&name, &resolved))))
+        }
+        // Sample with ~ attached: kick ~909/kick or kick ~samples/kits/harsh 909/...
+        Some(s) if s.starts_with('~') => {
+            // Strip the ~ and collect remaining parts
+            let first_part = &s[1..]; // Remove leading ~
+            let sample_parts: Vec<String> = std::iter::once(first_part.to_string())
+                .chain(parts)
+                .collect();
+            let sample_query = sample_parts.join(" ");
+            let resolved = resolve_sample_path(&sample_query);
+            let path = std::path::Path::new(&resolved);
+            if !path.exists() {
+                let suggestions = find_similar_samples(&sample_query);
+                return Err(anyhow!("{}", not_found_sample(&sample_query, &suggestions)));
+            }
+            let (_, track) = track_mut(song, &track_name)?;
+            let name = track.name.clone();
+            track.sample = Some(resolved.clone());
+            crate::audio::reload_song(song);
+            Ok(Some(Output::Text(track_sample(&name, &resolved))))
+        }
+        // Mute: kick mute
+        Some("mute") => {
+            let (_, track) = track_mut(song, &track_name)?;
+            let name = track.name.clone();
+            track.mute = true;
+            crate::audio::reload_song(song);
+            Ok(Some(Output::Text(track_muted(&name))))
+        }
+        // Unmute: kick unmute
+        Some("unmute") => {
+            let (_, track) = track_mut(song, &track_name)?;
+            let name = track.name.clone();
+            track.mute = false;
+            crate::audio::reload_song(song);
+            Ok(Some(Output::Text(track_unmuted(&name))))
+        }
+        // Solo: kick solo
+        Some("solo") => {
+            let (_, track) = track_mut(song, &track_name)?;
+            let name = track.name.clone();
+            track.solo = !track.solo;
+            let is_solo = track.solo;
+            crate::audio::reload_song(song);
+            Ok(Some(Output::Text(track_solo(&name, is_solo))))
+        }
+        // Variation switch: kick > fill
+        Some(">") => {
+            let var_name = parts.next().ok_or_else(|| anyhow!("usage: trackname > variation"))?;
+            let (_, track) = track_mut(song, &track_name)?;
+            let name = track.name.clone();
+            if var_name == "main" || var_name == "-" {
+                track.current_variation = None;
+                crate::audio::reload_song(song);
+                Ok(Some(Output::Text(track_variation(&name, "main"))))
+            } else if track.variations.contains_key(&var_name) {
+                track.current_variation = Some(var_name.clone());
+                crate::audio::reload_song(song);
+                Ok(Some(Output::Text(track_variation(&name, &var_name))))
+            } else {
+                Err(anyhow!("variation '{}' not found", var_name))
+            }
+        }
+        // Delay: kick delay on/off or kick delay 1/8 0.4 0.3
+        Some("delay") => {
+            let action = parts.next().ok_or_else(|| anyhow!("usage: trackname delay on|off"))?;
+            let (_, track) = track_mut(song, &track_name)?;
+            let name = track.name.clone();
+            match action.as_str() {
+                "on" => {
+                    track.delay.on = true;
+                    crate::audio::reload_song(song);
+                    Ok(Some(Output::Text(track_delay(&name, true, None, None, None))))
+                }
+                "off" => {
+                    track.delay.on = false;
+                    crate::audio::reload_song(song);
+                    Ok(Some(Output::Text(track_delay(&name, false, None, None, None))))
+                }
+                time_val => {
+                    track.delay.on = true;
+                    track.delay.time = time_val.to_string();
+                    if let Some(fb) = parts.next() {
+                        track.delay.feedback = parse_unit_range("feedback", &fb)?;
+                    }
+                    if let Some(mix) = parts.next() {
+                        track.delay.mix = parse_unit_range("mix", &mix)?;
+                    }
+                    let t = track.delay.time.clone();
+                    let fb = track.delay.feedback;
+                    let mix = track.delay.mix;
+                    crate::audio::reload_song(song);
+                    Ok(Some(Output::Text(track_delay(&name, true, Some(&t), Some(fb), Some(mix)))))
+                }
+            }
+        }
+        // Gen: kick gen euclid(5,16)
+        Some("gen") => {
+            let script = parts.next().ok_or_else(|| anyhow!("usage: trackname gen euclid(5,16)"))?;
+            let script = script.trim_matches(|c| c == '`' || c == '"');
+            let engine = PatternEngine::new();
+            match engine.eval(script) {
+                Ok(pattern) => {
+                    let (_, track) = track_mut(song, &track_name)?;
+                    let name = track.name.clone();
+                    track.pattern = Some(Pattern::visual(&pattern));
+                    crate::audio::reload_song(song);
+                    Ok(Some(Output::Text(track_generated(&name, &pattern))))
+                }
+                Err(e) => Err(anyhow!("script error: {}", e)),
+            }
+        }
+        // AI: kick ai "funky"
+        Some("ai") => {
+            let description: String = std::iter::once(parts.next().unwrap_or_default())
+                .chain(parts.map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+                .join(" ")
+                .trim_matches('"')
+                .to_string();
+            
+            let config = AiConfig::default();
+            let context = PatternContext {
+                bpm: song.bpm,
+                steps: 16,
+                genre_hint: None,
+                other_patterns: song.tracks
+                    .iter()
+                    .filter_map(|t| t.active_pattern())
+                    .filter_map(|p| match p {
+                        Pattern::Visual(s) => Some(s.clone()),
+                    })
+                    .take(3)
+                    .collect(),
+            };
+            
+            println!("  {} generating...", EMOJI_SPARKLE);
+            
+            match suggest_patterns(&config, &description, &context) {
+                Ok(patterns) => {
+                    let mut output = format!("  {}  {} suggestions:\n", track_name, EMOJI_SPARKLE);
+                    for (i, pat) in patterns.iter().enumerate() {
+                        output.push_str(&format!("     {}) {}\n", i + 1, prettify_pattern(pat)));
+                    }
+                    Ok(Some(Output::Text(output)))
+                }
+                Err(e) => Err(anyhow!("AI generation failed: {}", e)),
+            }
+        }
+        // Gain: kick -3db or kick +2db
+        Some(val) if looks_like_gain(val) => {
+            let db = parse_gain_value(val)?;
+            let (_, track) = track_mut(song, &track_name)?;
+            let name = track.name.clone();
+            track.gain_db = db;
+            crate::audio::reload_song(song);
+            Ok(Some(Output::Text(track_gain(&name, db))))
+        }
+        // Not a track-first command we recognize
+        _ => Ok(None),
+    }
+}
 
-Delay:
-  delay <idx> on|off          Toggle delay
-  delay <idx> time <t>        Set time (1/4, 1/8, 100ms)
-  delay <idx> feedback <f>    Set feedback (0.0-1.0)
-  delay <idx> mix <m>         Set wet/dry mix (0.0-1.0)
+/// Check if a string looks like a pattern (contains x, X, or . at start)
+fn looks_like_pattern(s: &str) -> bool {
+    let first = s.chars().next().unwrap_or(' ');
+    matches!(first, 'x' | 'X' | '.')
+}
 
-Generators:
-  gen <idx> `script`    Generate pattern with Rhai
-                        Built-ins: euclid(k,n), random(d,seed), fill(n)
-  ai "description"      AI pattern suggestions (requires Ollama)
+/// Check if a string looks like a gain value (-3db, +2db, -3, +2)
+fn looks_like_gain(s: &str) -> bool {
+    if s.is_empty() { return false; }
+    let first = s.chars().next().unwrap_or(' ');
+    (first == '-' || first == '+') && s.len() > 1
+}
 
-Pattern notation: x=hit X=accent .=rest _=tie
-  Modifiers: +7 (pitch) v80 (velocity) ?50% (prob) {3} (ratchet)
-  Chords: (x x+4 x+7)   Gates: =3/4   Repeats: (x.)*4
-
-  clear                 Clear terminal
-"#;
+/// Parse a gain value like "-3db", "+2db", "-3", "+2"
+fn parse_gain_value(s: &str) -> Result<f32> {
+    let cleaned = s.trim_end_matches("db").trim_end_matches("dB");
+    cleaned.parse().map_err(|_| anyhow!("invalid gain value: {}", s))
+}
 
 fn parse_track_index(song: &Song, raw: &str) -> Result<usize> {
-    let idx: usize = raw.parse()?;
-    if idx == 0 || idx > song.tracks.len() {
-        bail!("no such track index");
+    // Try numeric index first (1-based)
+    if let Ok(idx) = raw.parse::<usize>() {
+        if idx == 0 || idx > song.tracks.len() {
+            bail!("no such track index");
+        }
+        return Ok(idx - 1);
     }
-    Ok(idx - 1)
+    
+    // Try name match (case-insensitive)
+    let raw_lower = raw.to_lowercase();
+    for (i, track) in song.tracks.iter().enumerate() {
+        if track.name.to_lowercase() == raw_lower {
+            return Ok(i);
+        }
+    }
+    
+    bail!("no track found: {}", raw);
 }
 
 fn track_mut<'a>(song: &'a mut Song, raw: &str) -> Result<(usize, &'a mut Track)> {
@@ -875,6 +1196,22 @@ fn parse_playback_mode(raw: &str) -> Result<TrackPlayback> {
 
 // --- Live Playing View Toggle ---
 static LIVE_VIEW: AtomicBool = AtomicBool::new(false);
+
+// --- Track Names State (for completer access) ---
+static TRACK_NAMES: once_cell::sync::Lazy<StdMutex<Vec<String>>> =
+    once_cell::sync::Lazy::new(|| StdMutex::new(Vec::new()));
+
+/// Update the shared track names cache (called when song changes).
+pub fn update_track_names(song: &Song) {
+    if let Ok(mut names) = TRACK_NAMES.lock() {
+        *names = song.tracks.iter().map(|t| t.name.clone()).collect();
+    }
+}
+
+/// Get current track names for autocomplete.
+pub fn get_track_names() -> Vec<String> {
+    TRACK_NAMES.lock().map(|g| g.clone()).unwrap_or_default()
+}
 
 fn set_live_view(on: bool) {
     LIVE_VIEW.store(on, Ordering::SeqCst);
@@ -1391,6 +1728,29 @@ mod tests {
     }
 
     #[test]
+    fn parse_track_index_supports_track_name() {
+        let mut song = Song::default();
+        song.tracks.push(Track::new("Kick"));
+        song.tracks.push(Track::new("Snare"));
+        song.tracks.push(Track::new("Hi-Hat"));
+
+        // Numeric indices still work (1-based)
+        assert_eq!(parse_track_index(&song, "1").unwrap(), 0);
+        assert_eq!(parse_track_index(&song, "2").unwrap(), 1);
+
+        // Exact name match (case-insensitive)
+        assert_eq!(parse_track_index(&song, "Kick").unwrap(), 0);
+        assert_eq!(parse_track_index(&song, "kick").unwrap(), 0);
+        assert_eq!(parse_track_index(&song, "SNARE").unwrap(), 1);
+        assert_eq!(parse_track_index(&song, "Hi-Hat").unwrap(), 2);
+
+        // Invalid names/indices return errors
+        assert!(parse_track_index(&song, "Bass").is_err());
+        assert!(parse_track_index(&song, "0").is_err());
+        assert!(parse_track_index(&song, "99").is_err());
+    }
+
+    #[test]
     fn paren_syntax_executes_single_command() {
         let mut song = Song::default();
         let output = handle_line(&mut song, "track(\"Kick\")").expect("track");
@@ -1422,8 +1782,9 @@ mod tests {
         }
 
         if let Output::Text(t) = output {
-            assert!(t.contains("pattern set"));
-            assert!(t.contains("sample"));  // May say "sample:" instead of "sample set"
+            // New styled output uses ● for hits
+            assert!(t.contains("●") || t.contains("x..."));
+            assert!(t.contains("Kick") || t.contains("kick"));
         } else { panic!("expected text output"); }
     }
 }

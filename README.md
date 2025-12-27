@@ -9,9 +9,10 @@ A command-line groovebox with a powerful REPL for building patterns and playing 
 - **Rhai Scripting** for generative patterns (`euclid`, `random`, `fill`, and more)
 - **Pattern Variations** for live switching between arrangements
 - **AI-powered Pattern Generation** via local LLM (Ollama)
-- **Tab Completion** for sample paths and commands
+- **Fuzzy Sample Search** with Tab completion
 - **Hot Reload** from YAML files with live playback updates
 - **Live View** showing playhead position and track status
+- **Beautiful UI** with emoji feedback and styled output
 
 ## Install
 
@@ -30,21 +31,35 @@ cargo run --
 ## Quick Start
 
 ```
-> track "Kick"
-> sample 1 "samples/kits/harsh 909/Kick.wav"
-> pattern 1 "x... x... x... x..."
-> bpm 120
-> play
+♪ 120 ⏹ › + kick
+  ✓ added kick
+
+♪ 120 ⏹ › kick ~ 909/kick
+  kick  🔊 samples/kits/harsh 909/Kick.wav
+
+♪ 120 ⏹ › kick x...x...x...x...
+  kick  ●···●···●···●···
+
+♪ 120 ⏹ › go
+  ▶ playing
 ```
 
-Or chain commands:
-```
-> track("Kick").sample(1, "samples/909/kick.wav").pattern(1, "x...x...x...x...")
-```
+## Command Examples
 
-Enable live view:
 ```
-> :live on
++ snare                    # add track
+snare ~ 909/snare          # set sample (fuzzy match)
+snare ..x...x...x...x.     # set pattern
+snare -2db                 # set gain
+snare mute                 # mute track
+kick.fill x.x.x.x.x.x.x.x. # create variation
+kick > fill                # switch to variation
+kick gen euclid(5,16)      # generate pattern
+120                        # set tempo
+go                         # play
+.                          # stop
+list                       # show tracks
+?                          # help
 ```
 
 ## Pattern Notation
@@ -67,11 +82,11 @@ Example: `x... xv60?50% x{2}. X`
 
 Generate patterns with Rhai:
 ```
-> gen 1 `euclid(5, 16)`
-track 1 pattern: x..x.x..x.x..x..
+kick gen euclid(5,16)
+  kick  🎲 ●··●·●··●·●··●··
 
-> gen `random(0.3, 42)`
-generated: x...x.....x..x..
+kick gen random(0.3,42)
+  kick  🎲 ●···●·····●··●··
 ```
 
 Built-in generators: `euclid(k, n)`, `random(density, seed)`, `fill(length)`, `invert(pattern)`, `rotate(pattern, n)`
@@ -80,32 +95,30 @@ Built-in generators: `euclid(k, n)`, `random(density, seed)`, `fill(length)`, `i
 
 Store multiple patterns per track and switch live:
 ```
-> pattern 1.a "x...x...x...x..."
-> pattern 1.b "x.x.x.x.x.x.x.x."
-> var 1 b
-track 1 switched to variation 'b'
+kick.a x...x...x...x...
+kick.b x.x.x.x.x.x.x.x.
+kick > b
+  kick  → b
 ```
 
 ## Effects
 
 Per-track delay:
 ```
-> delay 1 on
-> delay 1 time 1/8
-> delay 1 feedback 0.4
-> delay 1 mix 0.3
+kick delay on
+kick delay 1/8 0.4 0.3
+  kick  🔁 delay 1/8 fb:0.40 mix:0.30
 ```
 
 ## AI Pattern Generation
 
 Generate patterns using a local LLM (requires Ollama):
 ```
-> ai 1 "funky kick pattern"
-Generating patterns for 'funky kick pattern'...
-Suggestions:
-  1) x..x..x.x...x...
-  2) x...x.x...x.x...
-  3) x.x...x...x.x...
+kick ai "funky"
+  ✨ generating...
+  kick  ✨ suggestions:
+     1) ●··●··●·●···●···
+     2) ●···●·●···●·●···
 ```
 
 ## Commands Reference
@@ -113,18 +126,21 @@ Suggestions:
 See `documentation/user-guide/commands.md` for the full command list.
 
 Key commands:
-- `play` / `stop` - Transport control
-- `bpm <n>` - Set tempo
-- `track "Name"` - Add track
-- `sample <idx> "path"` - Set sample
-- `pattern <idx> "..."` - Set pattern
-- `mute <idx>` / `solo <idx>` - Mix control
-- `gain <idx> <db>` - Volume
-- `gen <idx> \`script\`` - Generate pattern
-- `var <idx> <name>` - Switch variation
-- `save "file.yaml"` / `open "file.yaml"` - Persistence
-- `:live on` - Enable live view
-- `:help` - Show help
+- `go` / `play` — Start playback
+- `.` / `stop` — Stop playback
+- `120` — Set tempo (just type a number)
+- `+ name` — Add track
+- `- name` — Remove track
+- `name x...` — Set pattern
+- `name ~ sample` — Set sample
+- `name -3db` — Set gain
+- `name mute` / `unmute` / `solo` — Mix control
+- `name.var x...` — Set variation
+- `name > var` — Switch variation
+- `name gen expr` — Generate pattern
+- `save file.yaml` / `open file.yaml` — Persistence
+- `:live on` — Enable live view
+- `?` — Show help
 
 ## Documentation
 

@@ -51,13 +51,7 @@ fn main() -> Result<()> {
     };
 
     if !matches.get_flag("quiet") {
-        println!(
-            "CLI GROOVEBOX REPL — bpm: {} steps: {} swing: {}% repeat:{} (type :help)",
-            song.bpm,
-            song.steps,
-            song.swing,
-            if song.repeat_on() { "on" } else { "off" }
-        );
+        println!("♪ groove — type ? for help");
     }
 
     // If a song file exists in CWD (song.yaml preferred) or was opened, watch it for changes

@@ -1,219 +1,209 @@
 # Command Reference
 
-## Meta Commands
+## Quick Reference
 
-| Command | Description |
-|---------|-------------|
-| `:help` | Show built-in help |
-| `:q` / `:quit` / `:exit` | Exit the REPL |
-| `:doc` | Print documentation location |
-| `:live [on\|off]` | Toggle or show the live playing view |
+| Type | Action |
+|------|--------|
+| `go` / `play` | ▶ Start playback |
+| `.` / `stop` | ⏹ Stop playback |
+| `120` / `bpm 120` | Set tempo |
+| `+ kick` | Add track |
+| `- kick` | Remove track |
+| `list` / `ls` | Show all tracks |
+| `kick x...x...` | Set pattern |
+| `kick ~ 909/kick` | Set sample (fuzzy search) |
+| `kick -3db` | Set gain |
+| `kick mute` | Mute track |
+| `kick unmute` | Unmute track |
+| `kick solo` | Toggle solo |
+| `kick delay on` | Enable delay |
+| `kick.fill x.x.` | Set variation |
+| `kick > fill` | Switch to variation |
+| `kick gen euclid(5,16)` | Generate pattern |
+| `kick ai "funky"` | AI pattern suggestions |
+| `save song.yaml` | Save song |
+| `open song.yaml` | Load song |
+| `?` / `:help` | Show help |
+| `:live on` | Enable live view |
+| `:q` | Quit |
 
-## Song Commands
-
-| Command | Description |
-|---------|-------------|
-| `bpm <n>` | Set tempo (e.g., `bpm 120`) |
-| `steps <n>` | Set steps per bar (model only) |
-| `swing <percent>` | Set swing (0-100, affects timing) |
-| `list` | Print track list with settings |
-| `save "file.yaml"` | Save song to YAML |
-| `open "file.yaml"` | Load song from YAML |
+---
 
 ## Transport
 
 | Command | Description |
 |---------|-------------|
-| `play` | Start playback |
-| `stop` | Stop playback |
-| `clear` | Clear terminal live view region |
+| `go` or `play` | Start playback |
+| `.` or `stop` | Stop playback |
+| `120` or `bpm 120` | Set tempo to 120 BPM |
+| `swing <percent>` | Set swing (0-100) |
+
+---
 
 ## Track Management
 
 | Command | Description |
 |---------|-------------|
-| `track "Name"` | Add a new track |
-| `remove <idx>` | Remove track by index (1-based) |
-| `sample <idx> "path"` | Set sample (validates & resolves path) |
-| `samples [filter]` | List available samples |
-| `browse [dir] [idx]` | **Interactive sample browser** |
-| `preview "path"` | Play sample without setting |
-| `pattern <idx> "x..."` | Set visual pattern |
-| `mute <idx> [on\|off]` | Toggle or set mute |
-| `solo <idx> [on\|off]` | Toggle or set solo |
-| `gain <idx> <db>` | Set gain in dB (e.g., `gain 1 -3.0`) |
-| `playback <idx> <mode>` | Set mode: `gate`, `mono`, or `one_shot` |
-| `div <idx> <n>` | Set timing division (default 4 = 16ths) |
+| `+ name` or `track name` | Add a new track |
+| `- name` or `remove name` | Remove track |
+| `list` or `ls` | Show all tracks with patterns |
 
-### Sample Shortcuts
+Track names must be single words (no spaces). Examples: `kick`, `snare`, `hihat`, `hi-hat`.
 
-You don't need to type full paths—shortcuts are resolved automatically:
+---
+
+## Track Commands
+
+All track commands start with the track name, followed by the action:
+
+### Pattern
 
 ```
-> sample 1 "kick"
-track 1 sample: samples/kits/harsh 909/Kick.wav
-
-> sample 2 "909/snare"
-track 2 sample: samples/kits/harsh 909/Snare.wav
+kick x...x...x...x...
+snare ..x...x...x...x.
+hihat xxxxxxxxxxxxxxxx
 ```
 
-Browse available samples:
+Patterns use `x` for hits and `.` for rests. Spaces are ignored for readability:
+
 ```
-> samples
-Available samples:
-
-samples/kits/harsh 909:
-  Kick.wav
-  Snare.wav
-  Closed Hat.wav
-  ...
-
-> samples hat
-Samples matching 'hat':
-
-samples/kits/harsh 909:
-  Closed Hat.wav
+kick x... x... x... x...
 ```
 
-Preview before setting:
-```
-> preview "snare"
-▶ samples/kits/harsh 909/Snare.wav
-```
+### Sample
 
-### Interactive Sample Browser
+Use `~` to set a sample with fuzzy matching:
 
-Launch a full TUI browser with folder navigation:
 ```
-> browse
+kick ~ 909/kick
+snare ~ snare
+hihat ~ hat
 ```
 
-Controls:
-| Key | Action |
-|-----|--------|
-| ↑/↓ or j/k | Navigate up/down |
-| Enter or → | Select file / enter folder |
-| ← or Backspace | Go up one folder |
-| Space | Preview sample |
-| Esc or q | Cancel |
+Tab completion shows matching samples as you type.
 
-Set sample directly from browser:
+### Gain
+
 ```
-> browse samples 1
-```
-This opens the browser and sets track 1's sample to whatever you select.
-
-If a sample isn't found, you'll get suggestions:
-```
-> sample 1 "kik"
-sample not found: kik
-
-Did you mean:
-  samples/kits/harsh 909/Kick.wav
-  samples/kits/harsh 909/Kick Long.wav
-
-Tip: use `samples` to list available samples
+kick -3db
+snare +2db
+hihat -6db
 ```
 
-## Pattern Variations
+### Mute / Solo
 
-| Command | Description |
-|---------|-------------|
-| `pattern <idx>.<var> "..."` | Set a named variation (e.g., `pattern 1.a "x..."`) |
-| `var <idx> [name]` | Switch to variation or show available |
-| `var <idx> main` | Switch back to main pattern |
-
-Examples:
 ```
-> pattern 1.a "x...x...x...x..."    # main groove
-> pattern 1.fill "x.x.x.x.x.x.x.x." # fill pattern
-> var 1 fill                         # switch to fill
-> var 1 main                         # back to main
-> var 1                              # list variations
-track 1 variations: [main], a, fill
+kick mute
+kick unmute
+snare solo
 ```
 
-## Delay Effect
+### Delay
 
-| Command | Description |
-|---------|-------------|
-| `delay <idx> on` | Enable delay |
-| `delay <idx> off` | Disable delay |
-| `delay <idx> time <t>` | Set delay time (`1/4`, `1/8`, `100ms`) |
-| `delay <idx> feedback <f>` | Set feedback (0.0-1.0) |
-| `delay <idx> mix <m>` | Set wet/dry mix (0.0-1.0) |
+```
+kick delay on
+kick delay off
+kick delay 1/8 0.4 0.3    # time, feedback, mix
+```
 
-Example:
+---
+
+## Variations
+
+Store multiple patterns per track and switch between them:
+
 ```
-> delay 1 on
-> delay 1 time 1/8
-> delay 1 feedback 0.4
-> delay 1 mix 0.25
+kick x...x...x...x...       # main pattern
+kick.fill x.x.x.x.x.x.x.x.  # define "fill" variation
+kick > fill                  # switch to fill
+kick > main                  # back to main
 ```
+
+---
 
 ## Pattern Generation
 
-| Command | Description |
-|---------|-------------|
-| `gen <idx> \`script\`` | Generate pattern from Rhai script |
-| `gen \`script\`` | Preview generated pattern |
+### Scripted (Rhai)
+
+```
+kick gen euclid(5,16)
+kick gen random(0.3,42)
+kick gen fill(16)
+```
 
 Built-in generators:
 - `euclid(k, n)` — Euclidean rhythm (k hits in n steps)
 - `random(density, seed)` — Random pattern (density 0.0-1.0)
 - `fill(length)` — Drum fill pattern
-- `repeat(pattern, n)` — Repeat pattern n times
 - `invert(pattern)` — Swap hits and rests
 - `rotate(pattern, n)` — Rotate pattern by n steps
-- `humanize(pattern, amount)` — Add velocity variation
 
-Examples:
+### AI Generation
+
 ```
-> gen 1 `euclid(5, 16)`
-track 1 pattern: x..x.x..x.x..x..
-
-> gen `random(0.25, 42)`
-generated: ....x...x.......
-
-> gen 1 `invert("x...x...x...x...")`
-track 1 pattern: .xxx.xxx.xxx.xxx
+kick ai "funky"
+snare ai "breakbeat"
 ```
-
-## AI Pattern Generation
-
-| Command | Description |
-|---------|-------------|
-| `ai [idx] "description"` | Generate patterns using LLM |
 
 Requires Ollama running locally (`http://localhost:11434`).
 
-Examples:
-```
-> ai "funk kick"
-Suggestions:
-  1) x..x..x.x...x...
-  2) x...x.x...x.x...
+---
 
-> ai 1 "techno hi-hat"
-Suggestions:
-  1) x.x.x.x.x.x.x.x.
-  2) x.xxx.xxx.xxx.xx
-```
+## Files
 
-## Chaining Syntax
+| Command | Description |
+|---------|-------------|
+| `save song.yaml` | Save song to YAML |
+| `open song.yaml` | Load song from YAML |
 
-Commands can be written with parentheses and chained with dots:
+---
 
-```
-> track("Kick").sample(1, "samples/kick.wav").pattern(1, "x...x...")
-```
+## Meta Commands
 
-This executes all commands in sequence on one line.
+| Command | Description |
+|---------|-------------|
+| `?` or `:help` | Show help |
+| `:live on` | Enable live playhead view |
+| `:live off` | Disable live view |
+| `:q` or `:quit` | Exit |
 
-## Notes
+---
 
-- Paths with spaces must be wrapped in quotes
-- Track indices are 1-based
-- Visual patterns ignore whitespace (use spaces for readability)
-- If any track is solo, all non-solo tracks are muted
-- Tab completion works for sample paths and commands
+## Pattern Notation
+
+| Syntax | Description |
+|--------|-------------|
+| `x` or `X` | Hit (X = accented) |
+| `.` | Rest |
+| `_` | Tie/sustain |
+| `x+7` | Pitch up 7 semitones |
+| `xv80` | Velocity 80 (0-127) |
+| `x?50%` | 50% probability |
+| `x{3}` | Ratchet (3 sub-hits) |
+| `(x x+4 x+7)` | Chord |
+| `x=3/4` | Gate length 75% |
+
+Example: `x... xv60?50% x{2}. X`
+
+---
+
+## Legacy Commands
+
+These older command styles still work for backwards compatibility:
+
+| Old Style | New Style |
+|-----------|-----------|
+| `pattern kick "x..."` | `kick x...` |
+| `sample kick "path"` | `kick ~ path` |
+| `mute kick` | `kick mute` |
+| `gain kick -3` | `kick -3db` |
+| `bpm 120` | `120` |
+
+---
+
+## Tips
+
+- **Tab completion**: Works for track names, sample paths, and commands
+- **Fuzzy sample search**: Type part of a sample name after `~` and Tab
+- **Pattern spacing**: Spaces in patterns are ignored for readability
+- **Quick tempo**: Just type a number (e.g., `120`) to set BPM

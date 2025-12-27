@@ -17,8 +17,8 @@ cargo run -- -o songs/song.yaml
 
 You'll see:
 ```
-CLI GROOVEBOX REPL — bpm: 120 steps: 16 swing: 0% repeat:on (type :help)
->
+♪ groove — type ? for help
+♪ 120 ⏹ ›
 ```
 
 ## Create Your First Beat
@@ -26,24 +26,24 @@ CLI GROOVEBOX REPL — bpm: 120 steps: 16 swing: 0% repeat:on (type :help)
 ### 1. Add a kick track
 
 ```
-> track "Kick"
-added track Kick
+♪ 120 ⏹ › + kick
+  ✓ added kick
 ```
 
 ### 2. Load a sample
 
 ```
-> sample 1 "samples/kits/harsh 909/Kick.wav"
-track 1 sample set
+♪ 120 ⏹ › kick ~ 909/kick
+  kick  🔊 samples/kits/harsh 909/Kick.wav
 ```
 
-💡 **Tip:** Press Tab for sample path autocomplete!
+💡 **Tip:** Type `kick ~` then press Tab to browse samples!
 
 ### 3. Set a pattern
 
 ```
-> pattern 1 "x... x... x... x..."
-track 1 pattern set
+♪ 120 ⏹ › kick x...x...x...x...
+  kick  ●···●···●···●···
 ```
 
 Pattern notation: `x` = hit, `.` = rest
@@ -51,64 +51,79 @@ Pattern notation: `x` = hit, `.` = rest
 ### 4. Play it!
 
 ```
-> play
+♪ 120 ⏹ › go
+  ▶ playing
 ```
 
 Enable the live view to see playhead position:
 ```
-> :live on
-```
-
-### One-liner version
-
-Chain commands for speed:
-```
-> track("Kick").sample(1, "samples/909/kick.wav").pattern(1, "x...x...x...x...")
+♪ 120 ▶ › :live on
+  👁 live view on
 ```
 
 ## Add More Tracks
 
 ```
-> track "Snare"
-> sample 2 "samples/kits/harsh 909/Snare.wav"
-> pattern 2 ".... x... .... x..."
+♪ 120 ▶ › + snare
+  ✓ added snare
 
-> track "HiHat"
-> sample 3 "samples/kits/harsh 909/Closed Hat.wav"
-> pattern 3 "x.x. x.x. x.x. x.x."
+♪ 120 ▶ › snare ~ snare
+  snare  🔊 samples/kits/harsh 909/Snare.wav
+
+♪ 120 ▶ › snare ....x.......x...
+  snare  ····●·······●···
+
+♪ 120 ▶ › + hihat
+  ✓ added hihat
+
+♪ 120 ▶ › hihat ~ hat
+  hihat  🔊 samples/kits/harsh 909/Closed Hat.wav
+
+♪ 120 ▶ › hihat x.x.x.x.x.x.x.x.
+  hihat  ●·●·●·●·●·●·●·●·
 ```
 
 ## Adjust the Mix
 
 ```
-> gain 3 -6.0        # Lower hi-hat volume
-> mute 2             # Mute snare
-> solo 1             # Solo kick only
+♪ 120 ▶ › hihat -6db
+  hihat  🎚 -6.0db
+
+♪ 120 ▶ › snare mute
+  snare  🔇 muted
+
+♪ 120 ▶ › kick solo
+  kick  🎤 solo
 ```
 
 ## Add Some Flavor
 
 ### Velocity and accents
 ```
-> pattern 3 "xv60 X xv40 x"   # X = accent, v60 = velocity 60
+♪ 120 ▶ › hihat xv60.X.xv40.x...
+  hihat  ●·◉·●·●···
 ```
+X = accent, v60 = velocity 60
 
 ### Probability (generative feel)
 ```
-> pattern 3 "x x?50% x x?30%"  # 50% and 30% chance hits
+♪ 120 ▶ › hihat x.x?50%.x.x?30%
 ```
+50% and 30% chance hits
 
 ### Ratchets (rolls)
 ```
-> pattern 3 "x... x{3}. x... x{2}."  # Rapid sub-hits
+♪ 120 ▶ › snare ....x{3}.......x
 ```
+Rapid sub-hits
 
 ### Delay effect
 ```
-> delay 3 on
-> delay 3 time 1/8
-> delay 3 feedback 0.3
-> delay 3 mix 0.2
+♪ 120 ▶ › snare delay on
+  snare  🔁 delay on
+
+♪ 120 ▶ › snare delay 1/8 0.3 0.2
+  snare  🔁 delay 1/8 fb:0.30 mix:0.20
 ```
 
 ## Generate Patterns with Code
@@ -116,8 +131,8 @@ Chain commands for speed:
 Use Rhai scripts for algorithmic patterns:
 
 ```
-> gen 1 `euclid(5, 16)`
-track 1 pattern: x..x.x..x.x..x..
+♪ 120 ▶ › kick gen euclid(5,16)
+  kick  🎲 ●··●·●··●·●··●··
 ```
 
 Built-in generators:
@@ -130,38 +145,52 @@ Built-in generators:
 Store multiple patterns per track for live switching:
 
 ```
-> pattern 1.a "x...x...x...x..."   # main groove
-> pattern 1.b "x.x.x.x.x.x.x.x."   # busy variation
-> var 1 b                          # switch to busy
-> var 1 main                       # back to main
+♪ 120 ▶ › kick.a x...x...x...x...
+  kick.a  ●···●···●···●···
+
+♪ 120 ▶ › kick.fill x.x.x.x.x.x.x.x.
+  kick.fill  ●·●·●·●·●·●·●·●·
+
+♪ 120 ▶ › kick > fill
+  kick  → fill
+
+♪ 120 ▶ › kick > main
+  kick  → main
 ```
 
 ## Save Your Work
 
 ```
-> save "songs/my-beat.yaml"
-song saved
+♪ 120 ▶ › save my-beat.yaml
+  💾 saved my-beat.yaml
 
-> open "songs/my-beat.yaml"
-song loaded
+♪ 120 ▶ › open my-beat.yaml
+  📂 opened my-beat.yaml
 ```
 
-## Useful Commands
+## Quick Reference
 
 | Command | What it does |
 |---------|--------------|
-| `list` | Show all tracks |
-| `bpm 140` | Change tempo |
-| `swing 25` | Add swing feel |
-| `stop` | Stop playback |
-| `:help` | Show all commands |
+| `go` / `play` | Start playback |
+| `.` / `stop` | Stop playback |
+| `120` | Set tempo to 120 |
+| `+ name` | Add track |
+| `- name` | Remove track |
+| `list` / `ls` | Show all tracks |
+| `name x...` | Set pattern |
+| `name ~ sample` | Set sample |
+| `name -3db` | Set gain |
+| `name mute` | Mute track |
+| `name solo` | Toggle solo |
+| `?` | Show help |
 | `:live on` | Enable live view |
-| `clear` | Clear terminal |
+| `:q` | Quit |
 
 ## Next Steps
 
 - Read the [Command Reference](commands.md) for all options
 - Study [Pattern Notation](pattern-notation.md) for advanced patterns
-- Try the AI generator: `ai "funky breakbeat kick"`
+- Try the AI generator: `kick ai "funky breakbeat"`
 
 Happy beat making! 🥁

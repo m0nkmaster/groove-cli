@@ -2,8 +2,13 @@
 name = "groove-cli"
 version = "0.1.0"
 edition = "2021"
-description = "CLI-based REPL groovebox (scaffold)"
+description = "A command-line groovebox with a powerful REPL for building patterns and playing samples"
 license = "MIT"
+repository = "https://github.com/m0nkmaster/groove-cli"
+homepage = "https://github.com/m0nkmaster/groove-cli"
+readme = "README.md"
+keywords = ["music", "audio", "cli", "sequencer", "groovebox"]
+categories = ["multimedia::audio", "command-line-utilities"]
 
 [dependencies]
 anyhow = "1"
@@ -25,3 +30,8 @@ reqwest = { version = "0.12", features = ["json", "blocking"] }  # For AI API ca
 assert_cmd = "2"
 predicates = "3"
 tempfile = "3"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
