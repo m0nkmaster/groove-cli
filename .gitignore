@@ -21,4 +21,5 @@ target
 #.idea/
 
 # Deluge Community Preset Pack 1.2
-deluge-community-preset-pack-1.2-main
+deluge-community-preset-pack-1.2-mainsrc/.env
+.env
