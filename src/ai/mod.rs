@@ -52,13 +52,25 @@ struct ContentItem {
     text: Option<String>,
 }
 
+/// Delay FX info for AI context
+pub struct DelayInfo {
+    pub on: bool,
+    pub time: String,
+    pub feedback: f32,
+    pub mix: f32,
+}
+
 /// Track info for AI context
 pub struct TrackInfo {
     pub name: String,
     pub sample: Option<String>,
     pub pattern: Option<String>,
+    pub variations: Vec<String>,        // names of available variations
+    pub current_variation: Option<String>,
     pub muted: bool,
+    pub solo: bool,
     pub gain_db: f32,
+    pub delay: Option<DelayInfo>,
 }
 
 /// Context for pattern generation (full song state).
@@ -189,25 +201,56 @@ fn build_input(description: &str, context: &PatternContext) -> String {
     
     // Show current arrangement if tracks exist
     if !context.tracks.is_empty() {
-        input.push_str("Current arrangement:\n");
+        input.push_str("Current song arrangement:\n\n");
         for t in &context.tracks {
+            // Track header with name and sample
             let sample = t.sample.as_ref()
                 .and_then(|s| s.split('/').last())
                 .unwrap_or("(no sample)");
-            let status = if t.muted { " [muted]" } else { "" };
+            input.push_str(&format!("Track: {} (sample: {})\n", t.name, sample));
             
-            if let Some(ref pat) = t.pattern {
-                input.push_str(&format!("  {} ({}): {}{}\n", t.name, sample, pat, status));
-            } else {
-                input.push_str(&format!("  {} ({}): (no pattern){}\n", t.name, sample, status));
+            // Status flags
+            let mut flags: Vec<String> = Vec::new();
+            if t.muted { flags.push("muted".to_string()); }
+            if t.solo { flags.push("solo".to_string()); }
+            if t.gain_db != 0.0 { flags.push(format!("gain: {:.1}dB", t.gain_db)); }
+            if !flags.is_empty() {
+                input.push_str(&format!("  Status: {}\n", flags.join(", ")));
             }
+            
+            // Pattern
+            if let Some(ref pat) = t.pattern {
+                let var_info = t.current_variation.as_ref()
+                    .map(|v| format!(" (playing: {})", v))
+                    .unwrap_or_default();
+                input.push_str(&format!("  Pattern: {}{}\n", pat, var_info));
+            } else {
+                input.push_str("  Pattern: (none)\n");
+            }
+            
+            // Variations if any
+            if !t.variations.is_empty() {
+                input.push_str(&format!("  Variations: {}\n", t.variations.join(", ")));
+            }
+            
+            // Delay FX
+            if let Some(ref delay) = t.delay {
+                if delay.on {
+                    input.push_str(&format!(
+                        "  Delay: {} time, {:.0}% feedback, {:.0}% mix\n",
+                        delay.time, delay.feedback * 100.0, delay.mix * 100.0
+                    ));
+                }
+            }
+            
+            input.push('\n');
         }
-        input.push('\n');
     }
     
     // The actual request
     input.push_str(&format!(
-        "Create a {}-step pattern for track \"{}\".\nDescription: {}",
+        "Create a {}-step pattern for track \"{}\".\nDescription: {}\n\n\
+        Consider how this pattern will work with the existing tracks above.",
         context.steps, context.target_track, description
     ));
     
@@ -351,8 +394,12 @@ X...x...X...x...
                     name: "kick".to_string(),
                     sample: Some("samples/909/kick.wav".to_string()),
                     pattern: Some("x...x...x...x...".to_string()),
+                    variations: vec!["a".to_string(), "b".to_string()],
+                    current_variation: None,
                     muted: false,
+                    solo: false,
                     gain_db: 0.0,
+                    delay: Some(DelayInfo { on: true, time: "1/4".to_string(), feedback: 0.3, mix: 0.25 }),
                 },
             ],
         };
@@ -361,6 +408,9 @@ X...x...X...x...
         assert!(input.contains("x...x...x...x..."));
         assert!(input.contains("snare"));
         assert!(input.contains("punchy backbeat"));
+        // Check new fields are in the output
+        assert!(input.contains("Variations: a, b"));
+        assert!(input.contains("Delay:"));
     }
 
     #[test]

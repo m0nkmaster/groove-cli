@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Result};
 use rustyline::{error::ReadlineError, history::DefaultHistory, Editor, ExternalPrinter};
 
-use crate::ai::{AiConfig, PatternContext, TrackInfo, suggest_patterns};
+use crate::ai::{AiConfig, DelayInfo, PatternContext, TrackInfo, suggest_patterns};
 use crate::model::pattern::Pattern;
 use crate::model::song::Song;
 use crate::model::track::{Track, TrackPlayback};
@@ -355,8 +355,21 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
                     pattern: t.active_pattern().map(|p| match p {
                         Pattern::Visual(s) => s.clone(),
                     }),
+                    variations: t.variations.keys().cloned().collect(),
+                    current_variation: t.current_variation.clone(),
                     muted: t.mute,
+                    solo: t.solo,
                     gain_db: t.gain_db,
+                    delay: if t.delay.on {
+                        Some(DelayInfo {
+                            on: t.delay.on,
+                            time: t.delay.time.clone(),
+                            feedback: t.delay.feedback,
+                            mix: t.delay.mix,
+                        })
+                    } else {
+                        None
+                    },
                 }).collect(),
             };
             
@@ -1099,8 +1112,21 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
                     pattern: t.active_pattern().map(|p| match p {
                         Pattern::Visual(s) => s.clone(),
                     }),
+                    variations: t.variations.keys().cloned().collect(),
+                    current_variation: t.current_variation.clone(),
                     muted: t.mute,
+                    solo: t.solo,
                     gain_db: t.gain_db,
+                    delay: if t.delay.on {
+                        Some(DelayInfo {
+                            on: t.delay.on,
+                            time: t.delay.time.clone(),
+                            feedback: t.delay.feedback,
+                            mix: t.delay.mix,
+                        })
+                    } else {
+                        None
+                    },
                 }).collect(),
             };
             
