@@ -108,8 +108,11 @@ pub fn suggest_patterns(config: &AiConfig, description: &str, context: &PatternC
         .map(|c| c.message.content.clone())
         .unwrap_or_default();
     
-    // Parse patterns from response
-    let patterns = extract_patterns(&content);
+    // Parse patterns from response and normalize to exact step count
+    let patterns: Vec<String> = extract_patterns(&content)
+        .into_iter()
+        .map(|p| adjust_pattern_length(&p, context.steps))
+        .collect();
     
     if patterns.is_empty() {
         Err(anyhow!("No valid patterns in AI response: {}", content))
@@ -122,7 +125,9 @@ pub fn suggest_patterns(config: &AiConfig, description: &str, context: &PatternC
 fn keyword_pattern(desc: &str, steps: usize) -> Option<String> {
     let d = desc.to_lowercase();
     
-    let pattern = if d.contains("4") && (d.contains("floor") || d.contains("beat") || d.contains("kick")) {
+    let pattern = if d.contains("one") && d.contains("hit") || d.contains("single") {
+        "x..............."
+    } else if d.contains("4") && (d.contains("floor") || d.contains("beat") || d.contains("kick")) {
         "x...x...x...x..."
     } else if d.contains("simple") && d.contains("kick") {
         "x...x...x...x..."
