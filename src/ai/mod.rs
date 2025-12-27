@@ -72,12 +72,22 @@ pub fn suggest_patterns(config: &AiConfig, description: &str, context: &PatternC
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
     
+    let system_msg = format!(
+        "You are a drum machine pattern generator. You output {}-character patterns using x (hit) and . (rest).\n\
+        In a 16-step pattern: steps 1,5,9,13 are beats 1,2,3,4. Steps 5,13 are beats 2,4 (backbeat).\n\
+        'Four on floor' = x...x...x...x... (kick on every beat)\n\
+        'Backbeat' = ....x.......x... (snare on beats 2 and 4 only)\n\
+        'Offbeat' = ..x...x...x...x. (between beats)\n\
+        Reply with ONLY the pattern. No text, no quotes, no explanation.",
+        context.steps
+    );
+    
     let request = OpenAIRequest {
         model: config.model.clone(),
         messages: vec![
             Message {
                 role: "system".to_string(),
-                content: "You generate drum patterns. Reply with ONLY the pattern using x (hit) and . (rest). No explanation.".to_string(),
+                content: system_msg,
             },
             Message {
                 role: "user".to_string(),
@@ -108,11 +118,8 @@ pub fn suggest_patterns(config: &AiConfig, description: &str, context: &PatternC
         .map(|c| c.message.content.clone())
         .unwrap_or_default();
     
-    // Parse patterns from response and normalize to exact step count
-    let patterns: Vec<String> = extract_patterns(&content)
-        .into_iter()
-        .map(|p| adjust_pattern_length(&p, context.steps))
-        .collect();
+    // Parse patterns from response
+    let patterns = extract_patterns(&content);
     
     if patterns.is_empty() {
         Err(anyhow!("No valid patterns in AI response: {}", content))
@@ -125,14 +132,17 @@ pub fn suggest_patterns(config: &AiConfig, description: &str, context: &PatternC
 fn keyword_pattern(desc: &str, steps: usize) -> Option<String> {
     let d = desc.to_lowercase();
     
+    // Order matters! More specific patterns first
     let pattern = if d.contains("one") && d.contains("hit") || d.contains("single") {
         "x..............."
-    } else if d.contains("4") && (d.contains("floor") || d.contains("beat") || d.contains("kick")) {
-        "x...x...x...x..."
-    } else if d.contains("simple") && d.contains("kick") {
-        "x...x...x...x..."
+    } else if d.contains("backbeat") || (d.contains("snare") && d.contains("2") && d.contains("4")) {
+        "....x.......x..."  // Snare on beats 2 and 4
     } else if d.contains("offbeat") {
         "..x...x...x...x."
+    } else if d.contains("4") && d.contains("floor") {
+        "x...x...x...x..."  // Four on the floor (kick)
+    } else if d.contains("simple") && d.contains("kick") {
+        "x...x...x...x..."
     } else if d.contains("8th") || d.contains("eighth") {
         "x.x.x.x.x.x.x.x."
     } else if d.contains("16th") || d.contains("sixteenth") {
@@ -141,8 +151,6 @@ fn keyword_pattern(desc: &str, steps: usize) -> Option<String> {
         "x.......x......."
     } else if d.contains("syncopat") {
         "x..x..x...x..x.."
-    } else if d.contains("backbeat") || (d.contains("snare") && d.contains("2") && d.contains("4")) {
-        "....x.......x..."
     } else if d.contains("shuffle") {
         "x..x..x..x..x..x"
     } else if d.contains("funk") {
@@ -205,38 +213,47 @@ impl Default for PatternContext {
 }
 
 fn build_prompt(description: &str, context: &PatternContext) -> String {
-    let mut prompt = format!(
-        r#"Generate a {}-step drum pattern for track "{}" described as: "{}"
-
-SONG CONTEXT:
-- BPM: {}
-- Steps per bar: {}
-"#,
-        context.steps, context.target_track, description, context.bpm, context.steps
-    );
+    let mut prompt = String::new();
     
-    // Add existing tracks
+    // Song context
+    prompt.push_str(&format!(
+        "You are composing a {} BPM track. Each pattern has {} steps (each step = one 16th note).\n\n",
+        context.bpm, context.steps
+    ));
+    
+    // Existing tracks with patterns
     if !context.tracks.is_empty() {
-        prompt.push_str("\nEXISTING TRACKS:\n");
+        prompt.push_str("CURRENT ARRANGEMENT:\n");
         for t in &context.tracks {
-            let sample_name = t.sample.as_ref()
+            let sample = t.sample.as_ref()
                 .and_then(|s| s.split('/').last())
-                .unwrap_or("no sample");
-            let pattern = t.pattern.as_deref().unwrap_or("no pattern");
-            let status = if t.muted { " (muted)" } else { "" };
-            prompt.push_str(&format!("- {}: {} | {}{}\n", t.name, sample_name, pattern, status));
+                .unwrap_or("(no sample)");
+            if let Some(ref pat) = t.pattern {
+                prompt.push_str(&format!("{:>8}: {}  ← {}\n", t.name, pat, sample));
+            } else {
+                prompt.push_str(&format!("{:>8}: (empty)  ← {}\n", t.name, sample));
+            }
         }
+        prompt.push_str("\n");
     }
     
-    prompt.push_str(&format!(r#"
-RULES:
-- Use x (hit) and . (rest) only
-- Exactly {} characters
-- Complement the existing tracks rhythmically
-- Match the description's feel
-
-Reply with ONLY the {}-character pattern:
-"#, context.steps, context.steps));
+    // The request
+    prompt.push_str(&format!(
+        "Create a pattern for \"{}\" track: {}\n\n",
+        context.target_track, description
+    ));
+    
+    // Format specification
+    prompt.push_str(&format!(
+        "OUTPUT FORMAT:\n\
+        - Use ONLY: x (hit) and . (rest)\n\
+        - EXACTLY {} characters, no more, no less\n\
+        - Example of {} steps: {}\n\n\
+        Respond with the pattern only, no explanation:\n",
+        context.steps,
+        context.steps,
+        ".".repeat(context.steps).replacen('.', "x", 1)
+    ));
     
     prompt
 }
