@@ -15,7 +15,9 @@ use crate::pattern::scripted::PatternEngine;
 use crate::storage::song as song_io;
 
 mod completer;
+mod browser;
 use completer::GrooveHelper;
+use browser::{browse_samples, BrowserResult};
 
 pub fn run_repl(song: &mut Song) -> Result<()> {
     let helper = GrooveHelper::new();
@@ -350,6 +352,26 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
             }
             crate::audio::preview_sample(&resolved)?;
             Ok(Output::Text(format!("▶ {}", resolved)))
+        }
+        "browse" => {
+            // Interactive sample browser
+            let start_dir = parts.next().unwrap_or("samples".to_string());
+            match browse_samples(&start_dir) {
+                Ok(BrowserResult::Selected(path)) => {
+                    // If a track index follows, set the sample
+                    if let Some(idx) = parts.next() {
+                        let (i, track) = track_mut(song, &idx)?;
+                        track.sample = Some(path.clone());
+                        crate::audio::reload_song(song);
+                        Ok(Output::Text(format!("track {} sample: {}", i, path)))
+                    } else {
+                        // Just return the selected path
+                        Ok(Output::Text(format!("selected: {}", path)))
+                    }
+                }
+                Ok(BrowserResult::Cancelled) => Ok(Output::Text("cancelled".into())),
+                Err(e) => Err(anyhow::anyhow!("browser error: {}", e)),
+            }
         }
         "list" => Ok(Output::Text(song.list())),
         "play" => {
@@ -786,6 +808,7 @@ Tracks:
   list                  List all tracks
   sample <idx> "path"   Set sample (Tab for autocomplete)
   samples [filter]      List available samples
+  browse [dir] [idx]    Interactive sample browser
   preview "path"        Play sample without setting
   pattern <idx> "..."   Set pattern (x=hit, .=rest)
   mute <idx> [on|off]   Toggle mute

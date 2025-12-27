@@ -36,6 +36,7 @@
 | `remove <idx>` | Remove track by index (1-based) |
 | `sample <idx> "path"` | Set sample (validates & resolves path) |
 | `samples [filter]` | List available samples |
+| `browse [dir] [idx]` | **Interactive sample browser** |
 | `preview "path"` | Play sample without setting |
 | `pattern <idx> "x..."` | Set visual pattern |
 | `mute <idx> [on\|off]` | Toggle or set mute |
@@ -79,6 +80,28 @@ Preview before setting:
 > preview "snare"
 ▶ samples/kits/harsh 909/Snare.wav
 ```
+
+### Interactive Sample Browser
+
+Launch a full TUI browser with folder navigation:
+```
+> browse
+```
+
+Controls:
+| Key | Action |
+|-----|--------|
+| ↑/↓ or j/k | Navigate up/down |
+| Enter or → | Select file / enter folder |
+| ← or Backspace | Go up one folder |
+| Space | Preview sample |
+| Esc or q | Cancel |
+
+Set sample directly from browser:
+```
+> browse samples 1
+```
+This opens the browser and sets track 1's sample to whatever you select.
 
 If a sample isn't found, you'll get suggestions:
 ```
