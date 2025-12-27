@@ -52,9 +52,9 @@ pub fn success(msg: &str) -> String {
     format!("  {} {}", EMOJI_CHECK, msg)
 }
 
-/// Format a track pattern output
+/// Format a track pattern output (shows raw pattern and visual)
 pub fn track_pattern(name: &str, pattern: &str) -> String {
-    format!("  {}  {}", name, prettify_pattern(pattern))
+    format!("  {}  {}  {}", name, pattern, prettify_pattern(pattern))
 }
 
 /// Format a track sample output

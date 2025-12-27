@@ -97,10 +97,23 @@ fn build_prompt(description: &str, context: &PatternContext) -> String {
         r#"You are a drum pattern generator for a music sequencer.
 Generate 1 drum/rhythm pattern for: "{}"
 
+PATTERN SYNTAX:
+- x = hit, X = accented hit, . = rest, _ = tie (sustain)
+- | = bar divider (visual only, optional)
+- Modifiers (after x): ^ = accent, ~ = ghost/soft
+- x*2 x*3 x*4 = ratchet (rapid repeats/rolls)
+- (xx..) = subdivide group into the space of one step
+
+EXAMPLES:
+- x...x...x...x... = basic 4-on-floor kick
+- x.x.x.x.x.x.x.x. = driving 8th notes
+- X...x~..X...x~.. = accented downbeat, ghost offbeat
+- x*3.x...x*2.x... = with rolls/ratchets
+- x...|x...|x...|x... = with bar dividers
+
 Context:
 - BPM: {}
-- Steps: {} (where x = hit, . = rest)
-- Pattern notation examples: "x...x...x...x..." (basic 4/4), "x.x.x.x.x.x.x.x." (8th notes)
+- Steps: {}
 
 "#,
         description, context.bpm, context.steps
@@ -118,11 +131,8 @@ Context:
     }
     
     prompt.push_str(r#"
-Respond with exactly 1 pattern using only 'x' and '.' characters.
-The pattern must be exactly "#);
-    prompt.push_str(&context.steps.to_string());
-    prompt.push_str(r#" characters long.
-Reply with ONLY the pattern, nothing else.
+Reply with ONLY the pattern on a single line, nothing else.
+Use the syntax above. Be creative and musical.
 "#);
     
     prompt
@@ -134,11 +144,35 @@ fn extract_patterns(response: &str) -> Vec<String> {
         .lines()
         .map(|line| line.trim())
         .filter(|line| !line.is_empty())
-        .filter(|line| line.chars().all(|c| c == 'x' || c == 'X' || c == '.'))
-        .filter(|line| line.len() >= 4) // At least 4 steps
-        .map(|s| s.to_lowercase())
-        .take(5) // Max 5 suggestions
+        .filter(|line| is_valid_pattern(line))
+        .map(|s| s.to_string())
+        .take(3)
         .collect()
+}
+
+/// Check if a line looks like a valid pattern.
+fn is_valid_pattern(s: &str) -> bool {
+    if s.len() < 4 {
+        return false;
+    }
+    // Must contain at least one hit (x/X) or rest (.)
+    let has_hits = s.chars().any(|c| matches!(c, 'x' | 'X'));
+    let has_rests = s.contains('.');
+    if !has_hits && !has_rests {
+        return false;
+    }
+    // Must have at least one x or X (not just rests)
+    if !has_hits {
+        return false;
+    }
+    // All chars must be valid pattern syntax
+    let valid_chars = |c: char| {
+        matches!(
+            c,
+            'x' | 'X' | '.' | '_' | '|' | '^' | '~' | '>' | '<' | '(' | ')' | ' ' | '*'
+        ) || c.is_ascii_digit()
+    };
+    s.chars().all(valid_chars)
 }
 
 #[cfg(test)]
@@ -153,13 +187,21 @@ x...x...x...x...
 This is not a pattern
 x.x.x.x.x.x.x.x.
 123456
-................
+X...x~..X...x~..
 "#;
         let patterns = extract_patterns(response);
         assert_eq!(patterns.len(), 3);
         assert_eq!(patterns[0], "x...x...x...x...");
         assert_eq!(patterns[1], "x.x.x.x.x.x.x.x.");
-        assert_eq!(patterns[2], "................");
+        assert_eq!(patterns[2], "X...x~..X...x~.."); // accents and ghosts
+    }
+
+    #[test]
+    fn extract_patterns_with_ratchets() {
+        let response = "x*3.x...x*2.x...";
+        let patterns = extract_patterns(response);
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(patterns[0], "x*3.x...x*2.x...");
     }
 
     #[test]
