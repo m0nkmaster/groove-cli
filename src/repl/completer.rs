@@ -97,14 +97,23 @@ impl Completer for GrooveHelper {
         }
         
         // Check if we're completing a sample path (inside quotes after "sample")
-        if let Some(sample_start) = find_sample_completion_start(line_to_pos) {
+        if let Some((sample_start, inside_quotes)) = find_sample_completion_start(line_to_pos) {
             let prefix = &line_to_pos[sample_start..];
             let matches: Vec<Pair> = self.sample_cache
                 .iter()
-                .filter(|path| path.starts_with(prefix) || path.contains(prefix))
+                .filter(|path| {
+                    let p_lower = path.to_lowercase();
+                    let prefix_lower = prefix.to_lowercase();
+                    p_lower.starts_with(&prefix_lower) || p_lower.contains(&prefix_lower)
+                })
                 .map(|path| Pair {
                     display: path.clone(),
-                    replacement: format!("\"{}\"", path),
+                    // If inside quotes, don't add more quotes; just close the existing one
+                    replacement: if inside_quotes {
+                        format!("{}\"", path)
+                    } else {
+                        format!("\"{}\"", path)
+                    },
                 })
                 .take(20) // Limit results
                 .collect();
@@ -131,13 +140,13 @@ impl Completer for GrooveHelper {
 }
 
 /// Find the start position of a sample path to complete.
-/// Returns Some(pos) if we're inside a sample command's path argument.
-fn find_sample_completion_start(line: &str) -> Option<usize> {
+/// Returns Some((pos, inside_quotes)) if we're inside a sample command's path argument.
+fn find_sample_completion_start(line: &str) -> Option<(usize, bool)> {
     // Look for patterns like: sample 1 "path or sample 1 path
     let lower = line.to_lowercase();
     
-    // Check for sample command
-    if !lower.contains("sample") {
+    // Check for sample or preview command
+    if !lower.contains("sample") && !lower.contains("preview") {
         return None;
     }
     
@@ -146,19 +155,21 @@ fn find_sample_completion_start(line: &str) -> Option<usize> {
         // Check if this is an opening quote (no closing quote after it)
         let after_quote = &line[quote_pos + 1..];
         if !after_quote.contains('"') {
-            return Some(quote_pos + 1);
+            // We're inside quotes - return position after quote
+            return Some((quote_pos + 1, true));
         }
     }
     
     // Check for unquoted path after sample command
     let parts: Vec<&str> = line.split_whitespace().collect();
-    if parts.len() >= 2 && parts[0].to_lowercase() == "sample" {
+    if parts.len() >= 2 && (parts[0].to_lowercase() == "sample" || parts[0].to_lowercase() == "preview") {
         // If we have "sample <idx> <partial_path>", complete the path
-        if parts.len() >= 3 {
-            let path_start = line.rfind(parts[parts.len() - 1]).unwrap_or(0);
+        if parts.len() >= 3 || (parts[0].to_lowercase() == "preview" && parts.len() >= 2) {
+            let last_part = parts[parts.len() - 1];
+            let path_start = line.rfind(last_part).unwrap_or(0);
             // Only complete if it looks like a path
-            if parts[parts.len() - 1].contains('/') || parts[parts.len() - 1].starts_with("samples") {
-                return Some(path_start);
+            if last_part.contains('/') || last_part.starts_with("samples") || last_part.len() > 0 {
+                return Some((path_start, false));
             }
         }
     }
