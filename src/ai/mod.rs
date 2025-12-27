@@ -95,7 +95,7 @@ impl Default for PatternContext {
 fn build_prompt(description: &str, context: &PatternContext) -> String {
     let mut prompt = format!(
         r#"You are a drum pattern generator for a music sequencer.
-Generate 3 drum/rhythm patterns for: "{}"
+Generate 1 drum/rhythm pattern for: "{}"
 
 Context:
 - BPM: {}
@@ -111,21 +111,18 @@ Context:
     }
     
     if !context.other_patterns.is_empty() {
-        prompt.push_str("- Other patterns in the song:\n");
+        prompt.push_str("- Complement these existing patterns:\n");
         for p in &context.other_patterns {
             prompt.push_str(&format!("  {}\n", p));
         }
     }
     
     prompt.push_str(r#"
-Respond with exactly 3 patterns, one per line, using only 'x' and '.' characters.
-Each pattern should be exactly "#);
+Respond with exactly 1 pattern using only 'x' and '.' characters.
+The pattern must be exactly "#);
     prompt.push_str(&context.steps.to_string());
     prompt.push_str(r#" characters long.
-Example response format:
-x...x...x...x...
-x.x...x.x...x...
-x..x..x..x..x..x
+Reply with ONLY the pattern, nothing else.
 "#);
     
     prompt

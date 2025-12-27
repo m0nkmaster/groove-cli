@@ -1106,11 +1106,21 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
             
             match suggest_patterns(&config, &description, &context) {
                 Ok(patterns) => {
-                    let mut output = format!("  {}  {} suggestions:\n", track_name, EMOJI_SPARKLE);
-                    for (i, pat) in patterns.iter().enumerate() {
-                        output.push_str(&format!("     {}) {}\n", i + 1, prettify_pattern(pat)));
+                    if let Some(pattern) = patterns.first() {
+                        let (_, track) = track_mut(song, &track_name)?;
+                        let name = track.name.clone();
+                        if let Some(var_name) = variation {
+                            track.variations.insert(var_name.clone(), Pattern::visual(pattern));
+                            crate::audio::reload_song(song);
+                            Ok(Some(Output::Text(track_pattern(&format!("{}.{}", name, var_name), pattern))))
+                        } else {
+                            track.pattern = Some(Pattern::visual(pattern));
+                            crate::audio::reload_song(song);
+                            Ok(Some(Output::Text(track_pattern(&name, pattern))))
+                        }
+                    } else {
+                        Err(anyhow!("AI returned no valid patterns"))
                     }
-                    Ok(Some(Output::Text(output)))
                 }
                 Err(e) => Err(anyhow!("AI generation failed: {}", e)),
             }
