@@ -77,6 +77,7 @@ pub fn suggest_patterns(config: &AiConfig, description: &str, context: &PatternC
 pub struct PatternContext {
     pub bpm: u32,
     pub steps: usize,
+    #[allow(dead_code)]
     pub genre_hint: Option<String>,
     pub other_patterns: Vec<String>,
 }
@@ -94,46 +95,30 @@ impl Default for PatternContext {
 
 fn build_prompt(description: &str, context: &PatternContext) -> String {
     let mut prompt = format!(
-        r#"You are a drum pattern generator for a music sequencer.
-Generate 1 drum/rhythm pattern for: "{}"
+        r#"You are a drum pattern generator. Generate exactly 1 pattern for: "{}"
 
-PATTERN SYNTAX:
-- x = hit, X = accented hit, . = rest, _ = tie (sustain)
-- | = bar divider (visual only, optional)
-- Modifiers (after x): ^ = accent, ~ = ghost/soft
-- x*2 x*3 x*4 = ratchet (rapid repeats/rolls)
-- (xx..) = subdivide group into the space of one step
+SYNTAX: x=hit, X=accent, .=rest (exactly {} characters, no spaces)
 
 EXAMPLES:
-- x...x...x...x... = basic 4-on-floor kick
-- x.x.x.x.x.x.x.x. = driving 8th notes
-- X...x~..X...x~.. = accented downbeat, ghost offbeat
-- x*3.x...x*2.x... = with rolls/ratchets
-- x...|x...|x...|x... = with bar dividers
+x...x...x...x... (4-on-floor)
+x.x.x.x.x.x.x.x. (8th notes)
+X...x...X...x... (accented)
 
-Context:
-- BPM: {}
-- Steps: {}
-
+BPM: {}
 "#,
-        description, context.bpm, context.steps
+        description, context.steps, context.bpm
     );
     
-    if let Some(ref genre) = context.genre_hint {
-        prompt.push_str(&format!("- Genre: {}\n", genre));
-    }
-    
     if !context.other_patterns.is_empty() {
-        prompt.push_str("- Complement these existing patterns:\n");
-        for p in &context.other_patterns {
-            prompt.push_str(&format!("  {}\n", p));
-        }
+        prompt.push_str("Complement: ");
+        prompt.push_str(&context.other_patterns.first().unwrap_or(&String::new()));
+        prompt.push('\n');
     }
     
-    prompt.push_str(r#"
-Reply with ONLY the pattern on a single line, nothing else.
-Use the syntax above. Be creative and musical.
-"#);
+    prompt.push_str(&format!(
+        "\nReply with ONLY the {}-character pattern. No explanation.",
+        context.steps
+    ));
     
     prompt
 }
@@ -152,27 +137,17 @@ fn extract_patterns(response: &str) -> Vec<String> {
 
 /// Check if a line looks like a valid pattern.
 fn is_valid_pattern(s: &str) -> bool {
-    if s.len() < 4 {
+    // Must be reasonable length (4-64 chars, no spaces)
+    if s.len() < 4 || s.len() > 64 || s.contains(' ') {
         return false;
     }
-    // Must contain at least one hit (x/X) or rest (.)
+    // Must contain at least one hit (x/X)
     let has_hits = s.chars().any(|c| matches!(c, 'x' | 'X'));
-    let has_rests = s.contains('.');
-    if !has_hits && !has_rests {
-        return false;
-    }
-    // Must have at least one x or X (not just rests)
     if !has_hits {
         return false;
     }
-    // All chars must be valid pattern syntax
-    let valid_chars = |c: char| {
-        matches!(
-            c,
-            'x' | 'X' | '.' | '_' | '|' | '^' | '~' | '>' | '<' | '(' | ')' | ' ' | '*'
-        ) || c.is_ascii_digit()
-    };
-    s.chars().all(valid_chars)
+    // All chars must be valid pattern syntax (no spaces)
+    s.chars().all(|c| matches!(c, 'x' | 'X' | '.' | '_' | '|'))
 }
 
 #[cfg(test)]
@@ -187,21 +162,20 @@ x...x...x...x...
 This is not a pattern
 x.x.x.x.x.x.x.x.
 123456
-X...x~..X...x~..
+X...x...X...x...
 "#;
         let patterns = extract_patterns(response);
         assert_eq!(patterns.len(), 3);
         assert_eq!(patterns[0], "x...x...x...x...");
         assert_eq!(patterns[1], "x.x.x.x.x.x.x.x.");
-        assert_eq!(patterns[2], "X...x~..X...x~.."); // accents and ghosts
+        assert_eq!(patterns[2], "X...x...X...x...");
     }
 
     #[test]
-    fn extract_patterns_with_ratchets() {
-        let response = "x*3.x...x*2.x...";
+    fn extract_patterns_rejects_spaces() {
+        let response = "x... x... x... x...";
         let patterns = extract_patterns(response);
-        assert_eq!(patterns.len(), 1);
-        assert_eq!(patterns[0], "x*3.x...x*2.x...");
+        assert!(patterns.is_empty());
     }
 
     #[test]
@@ -209,13 +183,13 @@ X...x~..X...x~..
         let ctx = PatternContext {
             bpm: 140,
             steps: 16,
-            genre_hint: Some("techno".to_string()),
+            genre_hint: None,
             other_patterns: vec!["x...x...x...x...".to_string()],
         };
         let prompt = build_prompt("punchy kick", &ctx);
         assert!(prompt.contains("140"));
-        assert!(prompt.contains("techno"));
         assert!(prompt.contains("punchy kick"));
+        assert!(prompt.contains("x...x...x...x..."));
     }
 }
 
