@@ -26,34 +26,58 @@ impl Default for AiConfig {
     }
 }
 
-/// OpenAI chat completions request
+/// OpenAI Responses API request
 #[derive(Serialize)]
-struct OpenAIRequest {
+struct ResponsesRequest {
     model: String,
-    messages: Vec<Message>,
-    max_tokens: u32,
+    input: String,
+    instructions: String,
+    max_output_tokens: u32,
+    store: bool,
 }
 
-#[derive(Serialize)]
-struct Message {
-    role: String,
-    content: String,
-}
-
-/// OpenAI chat completions response
+/// OpenAI Responses API response
 #[derive(Deserialize)]
-struct OpenAIResponse {
-    choices: Vec<Choice>,
+struct ResponsesResponse {
+    output: Vec<OutputItem>,
 }
 
 #[derive(Deserialize)]
-struct Choice {
-    message: ResponseMessage,
+struct OutputItem {
+    content: Option<Vec<ContentItem>>,
 }
 
 #[derive(Deserialize)]
-struct ResponseMessage {
-    content: String,
+struct ContentItem {
+    text: Option<String>,
+}
+
+/// Track info for AI context
+pub struct TrackInfo {
+    pub name: String,
+    pub sample: Option<String>,
+    pub pattern: Option<String>,
+    pub muted: bool,
+    pub gain_db: f32,
+}
+
+/// Context for pattern generation (full song state).
+pub struct PatternContext {
+    pub bpm: u32,
+    pub steps: usize,
+    pub target_track: String,
+    pub tracks: Vec<TrackInfo>,
+}
+
+impl Default for PatternContext {
+    fn default() -> Self {
+        Self {
+            bpm: 120,
+            steps: 16,
+            target_track: String::new(),
+            tracks: Vec::new(),
+        }
+    }
 }
 
 /// Generate pattern suggestions based on a description.
@@ -64,41 +88,25 @@ pub fn suggest_patterns(config: &AiConfig, description: &str, context: &PatternC
     }
     
     let api_key = config.api_key.as_ref()
-        .ok_or_else(|| anyhow!("OPENAI_API_KEY not set in src/.env"))?;
+        .ok_or_else(|| anyhow!("OPENAI_API_KEY not set in .env"))?;
     
-    let prompt = build_prompt(description, context);
+    let instructions = build_instructions(context);
+    let input = build_input(description, context);
     
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
     
-    let system_msg = format!(
-        "You are a drum machine pattern generator. You output {}-character patterns using x (hit) and . (rest).\n\
-        In a 16-step pattern: steps 1,5,9,13 are beats 1,2,3,4. Steps 5,13 are beats 2,4 (backbeat).\n\
-        'Four on floor' = x...x...x...x... (kick on every beat)\n\
-        'Backbeat' = ....x.......x... (snare on beats 2 and 4 only)\n\
-        'Offbeat' = ..x...x...x...x. (between beats)\n\
-        Reply with ONLY the pattern. No text, no quotes, no explanation.",
-        context.steps
-    );
-    
-    let request = OpenAIRequest {
+    let request = ResponsesRequest {
         model: config.model.clone(),
-        messages: vec![
-            Message {
-                role: "system".to_string(),
-                content: system_msg,
-            },
-            Message {
-                role: "user".to_string(),
-                content: prompt,
-            },
-        ],
-        max_tokens: 50,
+        input,
+        instructions,
+        max_output_tokens: 100,
+        store: false,
     };
     
     let response = client
-        .post("https://api.openai.com/v1/chat/completions")
+        .post("https://api.openai.com/v1/responses")
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
         .json(&request)
@@ -111,11 +119,14 @@ pub fn suggest_patterns(config: &AiConfig, description: &str, context: &PatternC
         return Err(anyhow!("OpenAI API error {}: {}", status, body));
     }
     
-    let result: OpenAIResponse = response.json()
+    let result: ResponsesResponse = response.json()
         .map_err(|e| anyhow!("Failed to parse OpenAI response: {}", e))?;
     
-    let content = result.choices.first()
-        .map(|c| c.message.content.clone())
+    // Extract text from response
+    let content = result.output.first()
+        .and_then(|o| o.content.as_ref())
+        .and_then(|c| c.first())
+        .and_then(|c| c.text.clone())
         .unwrap_or_default();
     
     // Parse patterns from response
@@ -126,6 +137,81 @@ pub fn suggest_patterns(config: &AiConfig, description: &str, context: &PatternC
     } else {
         Ok(patterns)
     }
+}
+
+/// Build the system instructions with full context about what we're doing.
+fn build_instructions(context: &PatternContext) -> String {
+    format!(r#"You are a pattern generator for groove-cli, a command-line step sequencer for creating music.
+
+## WHAT YOU'RE CREATING
+You generate step sequences for tracks in a song. Each track plays a sample (audio file) according to its pattern. The patterns loop continuously to create rhythmic music.
+
+## PATTERN SYNTAX
+Patterns are strings where each character represents one step (typically a 16th note):
+- x or X = trigger/hit (play the sample)
+- . = rest/silence (no sound)
+- _ = tie/sustain (extend previous note)
+- | = bar divider (visual only, ignored by sequencer)
+
+Advanced syntax (optional):
+- X = accented hit (louder)
+- Grouping: (xx..) subdivides into the time of one step
+- Modifiers after x: ^ accent, ~ ghost/soft
+
+## CURRENT SONG
+- BPM: {}
+- Steps per pattern: {}
+
+## INSTRUMENT HINTS
+The track name often indicates the instrument type:
+- kick, bass, bd = low frequency, rhythmic foundation
+- snare, sd, clap = backbeat, typically beats 2 and 4
+- hat, hh, hihat = high frequency, often busy patterns
+- perc, conga, shaker = auxiliary rhythm
+- lead, synth, melody = melodic content
+- pad, strings = sustained, sparse patterns
+
+## MUSICAL GUIDELINES
+- Patterns should be musically coherent and complement existing tracks
+- Consider the BPM: faster tempos often need simpler patterns
+- Leave space - not every step needs a hit
+- Syncopation creates groove
+- The pattern must be EXACTLY {} characters long
+
+Reply with ONLY the pattern string. No explanation, no quotes, no markdown."#,
+        context.bpm, context.steps, context.steps
+    )
+}
+
+/// Build the user input/prompt with current arrangement and request.
+fn build_input(description: &str, context: &PatternContext) -> String {
+    let mut input = String::new();
+    
+    // Show current arrangement if tracks exist
+    if !context.tracks.is_empty() {
+        input.push_str("Current arrangement:\n");
+        for t in &context.tracks {
+            let sample = t.sample.as_ref()
+                .and_then(|s| s.split('/').last())
+                .unwrap_or("(no sample)");
+            let status = if t.muted { " [muted]" } else { "" };
+            
+            if let Some(ref pat) = t.pattern {
+                input.push_str(&format!("  {} ({}): {}{}\n", t.name, sample, pat, status));
+            } else {
+                input.push_str(&format!("  {} ({}): (no pattern){}\n", t.name, sample, status));
+            }
+        }
+        input.push('\n');
+    }
+    
+    // The actual request
+    input.push_str(&format!(
+        "Create a {}-step pattern for track \"{}\".\nDescription: {}",
+        context.steps, context.target_track, description
+    ));
+    
+    input
 }
 
 /// Match common descriptions to reliable patterns.
@@ -184,80 +270,6 @@ fn adjust_pattern_length(pattern: &str, steps: usize) -> String {
     }
 }
 
-/// Track info for AI context
-pub struct TrackInfo {
-    pub name: String,
-    pub sample: Option<String>,
-    pub pattern: Option<String>,
-    pub muted: bool,
-    pub gain_db: f32,
-}
-
-/// Context for pattern generation (full song state).
-pub struct PatternContext {
-    pub bpm: u32,
-    pub steps: usize,
-    pub target_track: String,
-    pub tracks: Vec<TrackInfo>,
-}
-
-impl Default for PatternContext {
-    fn default() -> Self {
-        Self {
-            bpm: 120,
-            steps: 16,
-            target_track: String::new(),
-            tracks: Vec::new(),
-        }
-    }
-}
-
-fn build_prompt(description: &str, context: &PatternContext) -> String {
-    let mut prompt = String::new();
-    
-    // Song context
-    prompt.push_str(&format!(
-        "You are composing a {} BPM track. Each pattern has {} steps (each step = one 16th note).\n\n",
-        context.bpm, context.steps
-    ));
-    
-    // Existing tracks with patterns
-    if !context.tracks.is_empty() {
-        prompt.push_str("CURRENT ARRANGEMENT:\n");
-        for t in &context.tracks {
-            let sample = t.sample.as_ref()
-                .and_then(|s| s.split('/').last())
-                .unwrap_or("(no sample)");
-            if let Some(ref pat) = t.pattern {
-                prompt.push_str(&format!("{:>8}: {}  ← {}\n", t.name, pat, sample));
-            } else {
-                prompt.push_str(&format!("{:>8}: (empty)  ← {}\n", t.name, sample));
-            }
-        }
-        prompt.push_str("\n");
-    }
-    
-    // The request
-    prompt.push_str(&format!(
-        "Create a pattern for \"{}\" track: {}\n\n",
-        context.target_track, description
-    ));
-    
-    // Format specification
-    prompt.push_str(&format!(
-        "OUTPUT FORMAT:\n\
-        - Use ONLY: x (hit) and . (rest)\n\
-        - EXACTLY {} characters, no more, no less\n\
-        - Example of {} steps: {}\n\n\
-        Respond with the pattern only, no explanation:\n",
-        context.steps,
-        context.steps,
-        ".".repeat(context.steps).replacen('.', "x", 1)
-    ));
-    
-    prompt
-}
-
 /// Extract valid patterns from LLM response.
 fn extract_patterns(response: &str) -> Vec<String> {
     response
@@ -282,7 +294,7 @@ fn is_valid_pattern(s: &str) -> bool {
         return false;
     }
     // All chars must be valid pattern syntax (no spaces)
-    s.chars().all(|c| matches!(c, 'x' | 'X' | '.' | '_' | '|'))
+    s.chars().all(|c| matches!(c, 'x' | 'X' | '.' | '_' | '|' | '^' | '~' | '(' | ')'))
 }
 
 #[cfg(test)]
@@ -314,14 +326,29 @@ X...x...X...x...
     }
 
     #[test]
-    fn build_prompt_includes_context() {
+    fn build_instructions_includes_context() {
         let ctx = PatternContext {
             bpm: 140,
             steps: 16,
             target_track: "kick".to_string(),
+            tracks: vec![],
+        };
+        let instructions = build_instructions(&ctx);
+        assert!(instructions.contains("140"));
+        assert!(instructions.contains("16"));
+        assert!(instructions.contains("groove-cli"));
+        assert!(instructions.contains("PATTERN SYNTAX"));
+    }
+
+    #[test]
+    fn build_input_includes_tracks() {
+        let ctx = PatternContext {
+            bpm: 120,
+            steps: 16,
+            target_track: "snare".to_string(),
             tracks: vec![
                 TrackInfo {
-                    name: "drums".to_string(),
+                    name: "kick".to_string(),
                     sample: Some("samples/909/kick.wav".to_string()),
                     pattern: Some("x...x...x...x...".to_string()),
                     muted: false,
@@ -329,13 +356,11 @@ X...x...X...x...
                 },
             ],
         };
-        let prompt = build_prompt("punchy kick", &ctx);
-        assert!(prompt.contains("140"));
-        assert!(prompt.contains("16"));
-        assert!(prompt.contains("punchy kick"));
-        assert!(prompt.contains("kick"));
-        assert!(prompt.contains("drums"));
-        assert!(prompt.contains("x...x...x...x..."));
+        let input = build_input("punchy backbeat", &ctx);
+        assert!(input.contains("kick"));
+        assert!(input.contains("x...x...x...x..."));
+        assert!(input.contains("snare"));
+        assert!(input.contains("punchy backbeat"));
     }
 
     #[test]
@@ -347,4 +372,3 @@ X...x...X...x...
         assert_eq!(keyword_pattern("random weird thing", 16), None); // falls back to AI
     }
 }
-
