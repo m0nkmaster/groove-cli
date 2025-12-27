@@ -1,4 +1,4 @@
-bpm: 150
+bpm: 100
 steps: 16
 swing: 0
 repeat: true
@@ -15,7 +15,7 @@ tracks:
   solo: false
   playback: gate
   gain_db: 0.0
-  div: 1
+  div: 4
 - name: snare
   sample: samples/80s Drum Machines/Linn Linn9000/Snare/Snare Classic 1 SD_80s_Linn9000.wav
   delay:
@@ -28,7 +28,7 @@ tracks:
   solo: false
   playback: gate
   gain_db: 0.0
-  div: 1
+  div: 4
 - name: hat
   sample: samples/80s Drum Machines/Linn Linn9000/Hi Hat/Hi Hat Closed 1 SD_80s_Linn9000.wav
   delay:
@@ -41,7 +41,7 @@ tracks:
   solo: false
   playback: gate
   gain_db: 0.0
-  div: 1
+  div: 4
 - name: synth
   sample: samples/synth/C4.wav
   delay:
@@ -54,7 +54,7 @@ tracks:
   solo: false
   playback: gate
   gain_db: 0.0
-  div: 1
+  div: 4
 - name: synth2
   sample: samples/synth/C4_2.wav
   delay:
@@ -67,4 +67,4 @@ tracks:
   solo: false
   playback: gate
   gain_db: 0.0
-  div: 1
+  div: 4

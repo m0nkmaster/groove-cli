@@ -73,17 +73,16 @@ impl Track {
     }
 }
 
-fn default_division() -> u32 { 1 }
+fn default_division() -> u32 { 4 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn default_division_is_one_step_per_beat() {
-        // Each step should equal one beat by default, so div=1
-        // This ensures pattern "x" at 60 BPM plays 60 times/minute
-        assert_eq!(default_division(), 1);
-        assert_eq!(Track::new("test").div, 1);
+    fn default_division_is_four_steps_per_beat() {
+        // Default to a 16th-note grid (4 steps per beat).
+        assert_eq!(default_division(), 4);
+        assert_eq!(Track::new("test").div, 4);
     }
 }
