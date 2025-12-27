@@ -171,13 +171,21 @@ fn adjust_pattern_length(pattern: &str, steps: usize) -> String {
     }
 }
 
-/// Context for pattern generation (BPM, existing patterns, etc.).
+/// Track info for AI context
+pub struct TrackInfo {
+    pub name: String,
+    pub sample: Option<String>,
+    pub pattern: Option<String>,
+    pub muted: bool,
+    pub gain_db: f32,
+}
+
+/// Context for pattern generation (full song state).
 pub struct PatternContext {
     pub bpm: u32,
     pub steps: usize,
-    #[allow(dead_code)]
-    pub genre_hint: Option<String>,
-    pub other_patterns: Vec<String>,
+    pub target_track: String,
+    pub tracks: Vec<TrackInfo>,
 }
 
 impl Default for PatternContext {
@@ -185,36 +193,45 @@ impl Default for PatternContext {
         Self {
             bpm: 120,
             steps: 16,
-            genre_hint: None,
-            other_patterns: Vec::new(),
+            target_track: String::new(),
+            tracks: Vec::new(),
         }
     }
 }
 
 fn build_prompt(description: &str, context: &PatternContext) -> String {
     let mut prompt = format!(
-        r#"Generate a {}-step drum pattern for: "{}"
+        r#"Generate a {}-step drum pattern for track "{}" described as: "{}"
 
-RULES:
-- x = hit, . = rest
-- Exactly {} characters total
-- Match the description's feel (sparse=few hits, busy=many hits)
-
-STYLE EXAMPLES:
-"simple kick" or "4 on floor" → x...x...x...x...
-"offbeat hihat" → ..x...x...x...x.
-"busy snare" → x.x.x.x.x.x.x.x.
-"sparse kick" → x.......x.......
-"syncopated" → x..x..x...x..x..
-
-Reply with ONLY the pattern, nothing else:
+SONG CONTEXT:
+- BPM: {}
+- Steps per bar: {}
 "#,
-        context.steps, description, context.steps
+        context.steps, context.target_track, description, context.bpm, context.steps
     );
     
-    if !context.other_patterns.is_empty() {
-        prompt.push_str(&format!("(complement: {})\n", context.other_patterns.first().unwrap_or(&String::new())));
+    // Add existing tracks
+    if !context.tracks.is_empty() {
+        prompt.push_str("\nEXISTING TRACKS:\n");
+        for t in &context.tracks {
+            let sample_name = t.sample.as_ref()
+                .and_then(|s| s.split('/').last())
+                .unwrap_or("no sample");
+            let pattern = t.pattern.as_deref().unwrap_or("no pattern");
+            let status = if t.muted { " (muted)" } else { "" };
+            prompt.push_str(&format!("- {}: {} | {}{}\n", t.name, sample_name, pattern, status));
+        }
     }
+    
+    prompt.push_str(&format!(r#"
+RULES:
+- Use x (hit) and . (rest) only
+- Exactly {} characters
+- Complement the existing tracks rhythmically
+- Match the description's feel
+
+Reply with ONLY the {}-character pattern:
+"#, context.steps, context.steps));
     
     prompt
 }
@@ -279,12 +296,23 @@ X...x...X...x...
         let ctx = PatternContext {
             bpm: 140,
             steps: 16,
-            genre_hint: None,
-            other_patterns: vec!["x...x...x...x...".to_string()],
+            target_track: "kick".to_string(),
+            tracks: vec![
+                TrackInfo {
+                    name: "drums".to_string(),
+                    sample: Some("samples/909/kick.wav".to_string()),
+                    pattern: Some("x...x...x...x...".to_string()),
+                    muted: false,
+                    gain_db: 0.0,
+                },
+            ],
         };
         let prompt = build_prompt("punchy kick", &ctx);
+        assert!(prompt.contains("140"));
         assert!(prompt.contains("16"));
         assert!(prompt.contains("punchy kick"));
+        assert!(prompt.contains("kick"));
+        assert!(prompt.contains("drums"));
         assert!(prompt.contains("x...x...x...x..."));
     }
 

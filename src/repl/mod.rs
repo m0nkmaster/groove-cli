@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Result};
 use rustyline::{error::ReadlineError, history::DefaultHistory, Editor, ExternalPrinter};
 
-use crate::ai::{AiConfig, PatternContext, suggest_patterns};
+use crate::ai::{AiConfig, PatternContext, TrackInfo, suggest_patterns};
 use crate::model::pattern::Pattern;
 use crate::model::song::Song;
 use crate::model::track::{Track, TrackPlayback};
@@ -348,15 +348,16 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
             let context = PatternContext {
                 bpm: song.bpm,
                 steps: 16,
-                genre_hint: None,
-                other_patterns: song.tracks
-                    .iter()
-                    .filter_map(|t| t.active_pattern())
-                    .filter_map(|p| match p {
-                        Pattern::Visual(s) => Some(s.clone()),
-                    })
-                    .take(3)
-                    .collect(),
+                target_track: track_idx.clone().unwrap_or_default(),
+                tracks: song.tracks.iter().map(|t| TrackInfo {
+                    name: t.name.clone(),
+                    sample: t.sample.clone(),
+                    pattern: t.active_pattern().map(|p| match p {
+                        Pattern::Visual(s) => s.clone(),
+                    }),
+                    muted: t.mute,
+                    gain_db: t.gain_db,
+                }).collect(),
             };
             
             println!("Generating patterns for '{}'...", description);
@@ -1091,15 +1092,16 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
             let context = PatternContext {
                 bpm: song.bpm,
                 steps: 16,
-                genre_hint: None,
-                other_patterns: song.tracks
-                    .iter()
-                    .filter_map(|t| t.active_pattern())
-                    .filter_map(|p| match p {
-                        Pattern::Visual(s) => Some(s.clone()),
-                    })
-                    .take(3)
-                    .collect(),
+                target_track: track_name.clone(),
+                tracks: song.tracks.iter().map(|t| TrackInfo {
+                    name: t.name.clone(),
+                    sample: t.sample.clone(),
+                    pattern: t.active_pattern().map(|p| match p {
+                        Pattern::Visual(s) => s.clone(),
+                    }),
+                    muted: t.mute,
+                    gain_db: t.gain_db,
+                }).collect(),
             };
             
             println!("  {} generating...", EMOJI_SPARKLE);
