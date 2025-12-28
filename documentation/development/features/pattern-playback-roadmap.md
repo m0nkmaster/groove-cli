@@ -12,6 +12,7 @@ The visual pattern parser supports a rich DSL, but playback only implements a su
 
 - **Hits/rests/ties**: `x` / `.` / `_`
 - **Pitch**: `+N` / `-N` semitone offsets (implemented via playback speed)
+- **Notes (by name)**: `c d# eb` (requires a track root note)
 - **Velocity + accent**: `vN` and `X`
 - **Chords / polyphony**
   - Inline chord groups `(x x+4 x+7)`

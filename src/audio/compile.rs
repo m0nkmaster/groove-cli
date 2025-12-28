@@ -1,4 +1,4 @@
-use crate::pattern::visual::{parse_visual_pattern, Gate, Step, StepEvent};
+use crate::pattern::visual::{parse_visual_pattern, Gate, NoteToken, Step, StepEvent};
 use super::timing::{ACCENT_VELOCITY, DEFAULT_VELOCITY};
 
 #[allow(dead_code)]
@@ -112,9 +112,14 @@ impl CompiledPattern {
     }
 }
 
+#[allow(dead_code)]
 pub fn visual_to_tokens_and_pitches(s: &str) -> CompiledPattern {
+    visual_to_tokens_and_pitches_with_root(s, None)
+}
+
+pub fn visual_to_tokens_and_pitches_with_root(s: &str, root_midi: Option<i32>) -> CompiledPattern {
     match parse_visual_pattern(s) {
-        Ok(steps) => compile_tokens_pitches_and_gates(&steps),
+        Ok(steps) => compile_tokens_pitches_and_gates(&steps, root_midi),
         Err(err) => {
             crate::console::warn(format!("pattern parse error: {err}"));
             let mut compiled_steps: Vec<CompiledStep> = Vec::new();
@@ -216,8 +221,9 @@ fn event_velocity(ev: &StepEvent) -> u8 {
     }
 }
 
-fn compile_tokens_pitches_and_gates(steps: &[Step]) -> CompiledPattern {
+fn compile_tokens_pitches_and_gates(steps: &[Step], root_midi: Option<i32>) -> CompiledPattern {
     let mut compiled_steps = Vec::with_capacity(steps.len());
+    let mut saw_note_without_root = false;
     
     // Legacy vectors for backward compatibility
     let mut tokens = Vec::with_capacity(steps.len());
@@ -231,9 +237,10 @@ fn compile_tokens_pitches_and_gates(steps: &[Step]) -> CompiledPattern {
             Step::Hit(ev) => {
                 let hold = 1 + count_following_ties(steps, i);
                 let vel = event_velocity(ev);
+                let pitch = resolve_event_pitch(ev, root_midi, &mut saw_note_without_root);
                 compiled_steps.push(CompiledStep {
                     events: vec![CompiledEvent {
-                        pitch: ev.note.pitch_offset,
+                        pitch,
                         velocity: vel,
                         gate: ev.gate,
                         ratchet: ev.ratchet,
@@ -243,7 +250,7 @@ fn compile_tokens_pitches_and_gates(steps: &[Step]) -> CompiledPattern {
                 });
                 // Legacy
                 tokens.push(true);
-                pitches.push(Some(ev.note.pitch_offset));
+                pitches.push(Some(pitch));
                 hold_steps_vec.push(hold);
                 gates.push(ev.gate);
                 velocities.push(vel);
@@ -253,7 +260,7 @@ fn compile_tokens_pitches_and_gates(steps: &[Step]) -> CompiledPattern {
                 let chord_events: Vec<CompiledEvent> = events
                     .iter()
                     .map(|e| CompiledEvent {
-                        pitch: e.note.pitch_offset,
+                        pitch: resolve_event_pitch(e, root_midi, &mut saw_note_without_root),
                         velocity: event_velocity(e),
                         gate: e.gate,
                         ratchet: e.ratchet,
@@ -267,7 +274,7 @@ fn compile_tokens_pitches_and_gates(steps: &[Step]) -> CompiledPattern {
                 // Legacy - just use first event
                 let first = events.first();
                 tokens.push(true);
-                pitches.push(first.map(|e| e.note.pitch_offset));
+                pitches.push(first.map(|e| resolve_event_pitch(e, root_midi, &mut saw_note_without_root)));
                 hold_steps_vec.push(hold);
                 gates.push(first.and_then(|e| e.gate));
                 velocities.push(first.map(|e| event_velocity(e)).unwrap_or(DEFAULT_VELOCITY));
@@ -283,6 +290,10 @@ fn compile_tokens_pitches_and_gates(steps: &[Step]) -> CompiledPattern {
         }
     }
 
+    if saw_note_without_root {
+        crate::console::warn("note tokens require a track root note; falling back to +N/-N pitch offsets".to_string());
+    }
+
     CompiledPattern {
         steps: compiled_steps,
         triggers: tokens,
@@ -291,6 +302,29 @@ fn compile_tokens_pitches_and_gates(steps: &[Step]) -> CompiledPattern {
         gates,
         velocities,
     }
+}
+
+fn resolve_event_pitch(ev: &StepEvent, root_midi: Option<i32>, saw_note_without_root: &mut bool) -> i32 {
+    let base = ev.note.pitch_offset;
+    let Some(note) = ev.note.base_note else {
+        return base;
+    };
+    let Some(root_midi) = root_midi else {
+        *saw_note_without_root = true;
+        return base;
+    };
+    let note_midi = note_token_to_midi(note, root_midi);
+    (note_midi - root_midi) + base
+}
+
+fn note_token_to_midi(note: NoteToken, root_midi: i32) -> i32 {
+    let root_octave = midi_to_octave(root_midi);
+    let octave = note.octave.unwrap_or(root_octave);
+    (octave as i32 + 1) * 12 + note.pitch_class as i32
+}
+
+fn midi_to_octave(midi: i32) -> i8 {
+    ((midi / 12) - 1) as i8
 }
 
 fn count_following_ties(steps: &[Step], start: usize) -> usize {
@@ -311,7 +345,7 @@ fn count_following_ties(steps: &[Step], start: usize) -> usize {
 pub fn compile_tokens_and_pitches(s: &str) -> (Vec<bool>, Vec<Option<i32>>) {
     match parse_visual_pattern(s) {
         Ok(steps) => {
-            let compiled = compile_tokens_pitches_and_gates(&steps);
+            let compiled = compile_tokens_pitches_and_gates(&steps, None);
             (compiled.triggers, compiled.pitches)
         }
         Err(_) => (Vec::new(), Vec::new()),
@@ -327,6 +361,21 @@ mod tests {
         let compiled = visual_to_tokens_and_pitches("x . x+7 .");
         assert_eq!(compiled.triggers, vec![true, false, true, false]);
         assert_eq!(compiled.pitches, vec![Some(0), None, Some(7), None]);
+    }
+
+    #[test]
+    fn note_tokens_resolve_relative_to_root_midi() {
+        // Root: C4 (MIDI 60). Bare note tokens default to the root octave.
+        let compiled = visual_to_tokens_and_pitches_with_root("c d e", Some(60));
+        assert_eq!(compiled.triggers, vec![true, true, true]);
+        assert_eq!(compiled.pitches, vec![Some(0), Some(2), Some(4)]);
+    }
+
+    #[test]
+    fn flat_note_token_resolves_to_correct_semitone_offset() {
+        // Root: C4 (MIDI 60). Bb4 is MIDI 70 => +10 semitones.
+        let compiled = visual_to_tokens_and_pitches_with_root("bb", Some(60));
+        assert_eq!(compiled.pitches, vec![Some(10)]);
     }
 
     #[test]

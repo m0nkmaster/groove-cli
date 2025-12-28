@@ -6,7 +6,7 @@ A terminal groovebox with a tracker-style TUI and a fast command language for bu
 
 - **Default TUI** (Ratatui): live tracker grid + command line + message log
 - **Classic REPL** (`--repl`): `rustyline` prompt with history + tab completion
-- **Visual pattern DSL**: pitch (`+N/-N`), velocity (`vN`), probability (`?…`), ratchets (`{N}`), chords, gate/ties
+- **Visual pattern DSL**: pitch (`+N/-N`), **note tokens** (`c d# eb`), velocity (`vN`), probability (`?…`), ratchets (`{N}`), chords, gate/ties
 - **Per-track delay**: tempo-synced feedback delay (time / feedback / mix)
 - **Scripted generators (Rhai)**: `euclid`, `random`, `fill`, `invert`, `rotate`, `humanize`, …
 - **AI pattern generation (optional)**: OpenAI Responses API (`OPENAI_API_KEY`)
@@ -51,6 +51,13 @@ These commands work in both the TUI and the REPL:
 + kick
 kick ~ 909/kick
 kick x...x...x...x...
+
+# melodic example (note tokens)
++ synth
+synth ~ synth/C4
+synth c d# eb bb
+notes synth
+prog synth "C Am F G"
 
 + snare
 snare ~ snare

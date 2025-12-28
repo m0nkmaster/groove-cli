@@ -1,4 +1,4 @@
-use super::types::{CycleCondition, Gate, Nudge, ParamLock, ParseError, Step, StepEvent};
+use super::types::{CycleCondition, Gate, NoteToken, Nudge, ParamLock, ParseError, Step, StepEvent};
 
 pub fn parse_visual_pattern(src: &str) -> Result<Vec<Step>, ParseError> {
     Parser::new(src).parse_pattern()
@@ -45,6 +45,10 @@ impl<'a> Parser<'a> {
                     let step = self.parse_hit()?;
                     steps.push(step);
                 }
+                Some(c) if is_note_letter(c) => {
+                    let step = self.parse_note()?;
+                    steps.push(step);
+                }
                 Some('#') => {
                     self.skip_comment();
                 }
@@ -87,6 +91,10 @@ impl<'a> Parser<'a> {
                 Some(c) if is_hit_symbol(c) => {
                     let hit = self.parse_hit()?;
                     steps.push(hit);
+                }
+                Some(c) if is_note_letter(c) => {
+                    let step = self.parse_note()?;
+                    steps.push(step);
                 }
                 Some('#') => {
                     self.skip_comment();
@@ -163,6 +171,52 @@ impl<'a> Parser<'a> {
         if symbol == 'X' {
             base.note.accent = true;
         }
+        self.parse_step_event_with_modifiers(base)
+    }
+
+    fn parse_note(&mut self) -> Result<Step, ParseError> {
+        let letter = self.bump().expect("note letter consumed");
+        let Some(mut pitch_class) = letter_to_pitch_class(letter) else {
+            return Err(ParseError::UnexpectedChar {
+                position: self.pos.saturating_sub(letter.len_utf8()),
+                found: letter,
+            });
+        };
+
+        match self.peek() {
+            Some('#') => {
+                self.bump();
+                pitch_class = (pitch_class + 1) % 12;
+            }
+            Some('b') => {
+                self.bump();
+                pitch_class = (pitch_class + 11) % 12;
+            }
+            _ => {}
+        }
+
+        let octave = {
+            let start = self.pos;
+            let digits = self.take_digits();
+            if digits.is_empty() {
+                None
+            } else {
+                let value: i32 = digits
+                    .parse()
+                    .map_err(|_| ParseError::InvalidNumber { position: start })?;
+                if value < i8::MIN as i32 || value > i8::MAX as i32 {
+                    return Err(ParseError::InvalidNumber { position: start });
+                }
+                Some(value as i8)
+            }
+        };
+
+        let mut base = StepEvent::default();
+        base.note.base_note = Some(NoteToken { pitch_class, octave });
+        self.parse_step_event_with_modifiers(base)
+    }
+
+    fn parse_step_event_with_modifiers(&mut self, mut base: StepEvent) -> Result<Step, ParseError> {
         let mut chord_offsets: Option<Vec<i32>> = None;
         loop {
             self.skip_inline_ws();
@@ -597,9 +651,39 @@ fn is_hit_symbol(c: char) -> bool {
     matches!(c, 'x' | 'X' | '1' | '*')
 }
 
+fn is_note_letter(c: char) -> bool {
+    matches!(c, 'a'..='g' | 'A'..='G')
+}
+
+fn letter_to_pitch_class(c: char) -> Option<u8> {
+    match c.to_ascii_lowercase() {
+        'c' => Some(0),
+        'd' => Some(2),
+        'e' => Some(4),
+        'f' => Some(5),
+        'g' => Some(7),
+        'a' => Some(9),
+        'b' => Some(11),
+        _ => None,
+    }
+}
+
 fn is_step_terminator(c: char) -> bool {
     matches!(
         c,
-        ' ' | '\n' | '\r' | '\t' | '|' | '.' | '_' | '(' | ')' | 'x' | 'X' | '1' | '*'
+        ' ' | '\n'
+            | '\r'
+            | '\t'
+            | '|'
+            | '.'
+            | '_'
+            | '('
+            | ')'
+            | 'x'
+            | 'X'
+            | '1'
+            | '*'
+            | 'a'..='g'
+            | 'A'..='G'
     )
 }

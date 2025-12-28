@@ -59,8 +59,16 @@ pub fn track_pattern(name: &str, pattern: &str) -> String {
 }
 
 /// Format a track sample output
-pub fn track_sample(name: &str, path: &str) -> String {
-    format!("  {}  {} {}", name, EMOJI_UNMUTE, path)
+pub fn track_sample(name: &str, path: &str, root: Option<crate::model::track::SampleRoot>) -> String {
+    let mut msg = format!("  {}  {} {}", name, EMOJI_UNMUTE, path);
+    if let Some(r) = root {
+        let note = crate::audio::pitch::midi_note_to_display(r.midi_note);
+        msg.push_str(&format!(
+            "  (root: {} {:.1}Hz {:+.1}c conf:{:.2})",
+            note, r.freq_hz, r.cents, r.confidence
+        ));
+    }
+    msg
 }
 
 /// Format a track mute output
@@ -207,6 +215,8 @@ pub fn help_box() -> String {
 {v}  TRACK COMMANDS                                    {v}
 {v}    kick x...     set pattern                       {v}
 {v}    kick ~ path   set sample                        {v}
+{v}    analyze kick  detect sample root note           {v}
+{v}    root kick c4  set root note manually            {v}
 {v}    kick x... ~q -3db  chain actions                {v}
 {v}    kick -3db     gain                              {v}
 {v}    kick mute     mute (unmute to undo)             {v}
@@ -215,6 +225,10 @@ pub fn help_box() -> String {
 {v}    kick > var    switch variation                  {v}
 {v}    kick gen expr generate (euclid, random, etc)    {v}
 {v}    kick ai "..." AI pattern                        {v}
+{v}                                                    {v}
+{v}  PROGRESSIONS                                      {v}
+{v}    prog kick "C Am F G"  chord pattern             {v}
+{v}    notes kick    show resolved notes               {v}
 {v}                                                    {v}
 {v}  DELAY                                             {v}
 {v}    kick delay on/off                               {v}

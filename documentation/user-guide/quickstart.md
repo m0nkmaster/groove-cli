@@ -73,6 +73,15 @@ snare ....x.......x...
 hat x.x.x.x.x.x.x.x.
 ```
 
+You can also enter **melodic note tokens** (sharps + flats supported):
+
+```text
++ synth
+synth ~ synth/C4
+synth c d# eb bb
+notes synth
+```
+
 ### 4) Play / stop
 
 ```text

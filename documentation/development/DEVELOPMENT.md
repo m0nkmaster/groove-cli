@@ -57,7 +57,7 @@ cargo test
   - `:live` ticker for the classic REPL (prints an ANSI grid driven by `audio::snapshot_live_state`)
 - `src/pattern/visual/`
   - Visual pattern parser (`parse_visual_pattern`)
-  - Supports hits/rests/ties, pitch, velocity, probability, ratchets, gates, chords, groups/repeats, comments
+  - Supports hits/rests/ties, pitch offsets, **note tokens** (e.g. `c d# eb`), velocity, probability, ratchets, gates, chords, groups/repeats, comments
 - `src/audio/`
   - `compile.rs`: compiles visual patterns into a runtime-friendly `CompiledPattern`
   - `effects.rs`: delay implementation and delay-time parsing

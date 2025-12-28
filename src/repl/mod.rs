@@ -292,6 +292,68 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
             crate::audio::reload_song(song);
             Ok(Output::Text(track_pattern(&name, &pat_display)))
         }
+        "prog" => {
+            let idx = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: prog <track> \"C Am F G\" [steps]"))?;
+            let prog_str = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: prog <track> \"C Am F G\" [steps]"))?;
+            let total_steps: usize = if let Some(raw) = parts.next() {
+                raw.parse()
+                    .map_err(|_| anyhow::anyhow!("steps must be a positive integer"))?
+            } else {
+                song.steps as usize
+            };
+            if total_steps == 0 {
+                bail!("steps must be positive");
+            }
+
+            let chord_symbols: Vec<&str> = prog_str
+                .split_whitespace()
+                .filter(|s| !s.is_empty())
+                .collect();
+            if chord_symbols.is_empty() {
+                bail!("progression is empty");
+            }
+
+            let mut chord_steps: Vec<String> = Vec::with_capacity(chord_symbols.len());
+            for sym in chord_symbols {
+                let (root_pc, is_minor) = parse_chord_symbol(sym)?;
+                let triad = chord_triad_pitch_classes(root_pc, is_minor);
+                chord_steps.push(format!(
+                    "({} {} {})",
+                    pitch_class_token(triad[0]),
+                    pitch_class_token(triad[1]),
+                    pitch_class_token(triad[2])
+                ));
+            }
+
+            let mut tokens: Vec<String> = Vec::with_capacity(total_steps);
+            let k = chord_steps.len();
+            let base = total_steps / k;
+            let rem = total_steps % k;
+            for (i, chord_token) in chord_steps.iter().enumerate() {
+                let reps = base + if i < rem { 1 } else { 0 };
+                for _ in 0..reps {
+                    tokens.push(chord_token.clone());
+                }
+            }
+            while tokens.len() < total_steps {
+                tokens.push(chord_steps.last().cloned().unwrap_or_else(|| "(c e g)".into()));
+            }
+            tokens.truncate(total_steps);
+
+            let pat = tokens.join(" ");
+            let name = {
+                let (_, track) = track_mut(song, &idx)?;
+                let name = track.name.clone();
+                track.pattern = Some(Pattern::visual(&pat));
+                name
+            };
+            crate::audio::reload_song(song);
+            Ok(Output::Text(track_generated(&name, &pat)))
+        }
         "var" => {
             // Switch track to a different variation: var <track_idx> <variation_name>
             // Or: var <track_idx> (to show current variation and list available)
@@ -459,14 +521,22 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
                 return Err(anyhow::anyhow!("{}", not_found_sample(&p, &suggestions)));
             }
             
-            let name = {
+            let analyzed_root = match crate::audio::pitch::analyze_sample_file(&resolved) {
+                Ok(r) => r,
+                Err(e) => {
+                    crate::console::warn(format!("pitch analysis failed: {}", e));
+                    None
+                }
+            };
+            let (name, root) = {
                 let (_, track) = track_mut(song, &idx)?;
                 let track_name = track.name.clone();
                 track.sample = Some(resolved.clone());
-                track_name
+                track.sample_root = analyzed_root;
+                (track_name, track.sample_root)
             };
             crate::audio::reload_song(song);
-            Ok(Output::Text(track_sample(&name, &resolved)))
+            Ok(Output::Text(track_sample(&name, &resolved, root)))
         }
         "samples" => {
             // List available samples with optional filter
@@ -494,6 +564,147 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
             crate::audio::preview_sample(&resolved)?;
             Ok(Output::Text(format!("▶ {}", resolved)))
         }
+        "analyze" => {
+            let idx = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: analyze <track>"))?;
+            let (name, path) = {
+                let (_, track) = track_mut(song, &idx)?;
+                let name = track.name.clone();
+                let path = track
+                    .sample
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("track '{}' has no sample", name))?;
+                (name, path)
+            };
+
+            let analyzed_root = match crate::audio::pitch::analyze_sample_file(&path) {
+                Ok(r) => r,
+                Err(e) => {
+                    crate::console::warn(format!("pitch analysis failed: {}", e));
+                    None
+                }
+            };
+
+            let root = {
+                let (_, track) = track_mut(song, &idx)?;
+                track.sample_root = analyzed_root;
+                track.sample_root
+            };
+            crate::audio::reload_song(song);
+
+            match root {
+                Some(r) => {
+                    let note = crate::audio::pitch::midi_note_to_display(r.midi_note);
+                    Ok(Output::Text(format!(
+                        "  {} analyzed root: {} {:.1}Hz {:+.1}c conf:{:.2}",
+                        name, note, r.freq_hz, r.cents, r.confidence
+                    )))
+                }
+                None => Ok(Output::Text(format!("  {} analyzed: no pitch detected", name))),
+            }
+        }
+        "root" => {
+            let idx = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: root <track> <note>"))?;
+            let note_str = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: root <track> <note>"))?;
+
+            let steps = crate::pattern::visual::parse_visual_pattern(&note_str)
+                .map_err(|e| anyhow::anyhow!("invalid note '{}': {}", note_str, e))?;
+            let note_token = match steps.as_slice() {
+                [crate::pattern::visual::Step::Hit(ev)] => ev
+                    .note
+                    .base_note
+                    .ok_or_else(|| anyhow::anyhow!("invalid note '{}': expected a note token", note_str))?,
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "invalid note '{}': expected a single note token",
+                        note_str
+                    ))
+                }
+            };
+
+            let (_, track) = track_mut(song, &idx)?;
+            let name = track.name.clone();
+            let default_octave: i8 = track
+                .sample_root
+                .map(|r| ((r.midi_note / 12) - 1) as i8)
+                .unwrap_or(4);
+            let octave = note_token.octave.unwrap_or(default_octave);
+            let midi_note = (octave as i32 + 1) * 12 + note_token.pitch_class as i32;
+            let freq_hz = 440.0_f32 * 2.0_f32.powf((midi_note as f32 - 69.0) / 12.0);
+
+            track.sample_root = Some(crate::model::track::SampleRoot {
+                freq_hz,
+                midi_note,
+                cents: 0.0,
+                confidence: 1.0,
+            });
+
+            crate::audio::reload_song(song);
+            let note = crate::audio::pitch::midi_note_to_display(midi_note);
+            Ok(Output::Text(format!("  {} root: {}", name, note)))
+        }
+        "notes" => {
+            let idx = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: notes <track>"))?;
+            let pos = parse_track_index(song, &idx)?;
+            let track = song
+                .tracks
+                .get(pos)
+                .ok_or_else(|| anyhow::anyhow!("no such track index"))?;
+            let root = track
+                .sample_root
+                .ok_or_else(|| anyhow::anyhow!("track '{}' has no root note (use analyze/root)", track.name))?;
+            let root_octave: i8 = ((root.midi_note / 12) - 1) as i8;
+
+            let Some(crate::model::pattern::Pattern::Visual(pat)) = track.active_pattern() else {
+                return Err(anyhow::anyhow!("track '{}' has no active pattern", track.name));
+            };
+
+            let steps = crate::pattern::visual::parse_visual_pattern(pat)
+                .map_err(|e| anyhow::anyhow!("pattern parse error: {}", e))?;
+
+            let mut tokens: Vec<String> = Vec::with_capacity(steps.len());
+            for step in steps {
+                match step {
+                    crate::pattern::visual::Step::Rest => tokens.push(".".into()),
+                    crate::pattern::visual::Step::Tie => tokens.push("_".into()),
+                    crate::pattern::visual::Step::Hit(ev) => {
+                        let midi = match ev.note.base_note {
+                            Some(note) => {
+                                let oct = note.octave.unwrap_or(root_octave);
+                                let note_midi = (oct as i32 + 1) * 12 + note.pitch_class as i32;
+                                note_midi + ev.note.pitch_offset
+                            }
+                            None => root.midi_note + ev.note.pitch_offset,
+                        };
+                        tokens.push(crate::audio::pitch::midi_note_to_display(midi));
+                    }
+                    crate::pattern::visual::Step::Chord(events) => {
+                        let mut chord_notes: Vec<String> = Vec::with_capacity(events.len());
+                        for ev in events {
+                            let midi = match ev.note.base_note {
+                                Some(note) => {
+                                    let oct = note.octave.unwrap_or(root_octave);
+                                    let note_midi = (oct as i32 + 1) * 12 + note.pitch_class as i32;
+                                    note_midi + ev.note.pitch_offset
+                                }
+                                None => root.midi_note + ev.note.pitch_offset,
+                            };
+                            chord_notes.push(crate::audio::pitch::midi_note_to_display(midi));
+                        }
+                        tokens.push(format!("({})", chord_notes.join(",")));
+                    }
+                }
+            }
+
+            Ok(Output::Text(format!("{}: {}", track.name, tokens.join(" "))))
+        }
         "browse" => {
             // Interactive sample browser
             let start_dir = parts.next().unwrap_or("samples".to_string());
@@ -504,10 +715,22 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
                         if !std::path::Path::new(&path).is_file() {
                             return Err(anyhow::anyhow!("sample must be a file: {}", path));
                         }
-                        let (i, track) = track_mut(song, &idx)?;
-                        track.sample = Some(path.clone());
+                        let analyzed_root = match crate::audio::pitch::analyze_sample_file(&path) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                crate::console::warn(format!("pitch analysis failed: {}", e));
+                                None
+                            }
+                        };
+                        let (name, root) = {
+                            let (_, track) = track_mut(song, &idx)?;
+                            let name = track.name.clone();
+                            track.sample = Some(path.clone());
+                            track.sample_root = analyzed_root;
+                            (name, track.sample_root)
+                        };
                         crate::audio::reload_song(song);
-                        Ok(Output::Text(format!("track {} sample: {}", i, path)))
+                        Ok(Output::Text(track_sample(&name, &path, root)))
                     } else {
                         // Just return the selected path
                         Ok(Output::Text(format!("selected: {}", path)))
@@ -540,6 +763,18 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
             let s = song_io::open(&path)?;
             *song = s;
             update_track_names(song);
+            // Best-effort pitch analysis on load so note tokens work immediately.
+            for t in &mut song.tracks {
+                if t.sample_root.is_some() {
+                    continue;
+                }
+                let Some(sample_path) = t.sample.clone() else { continue };
+                match crate::audio::pitch::analyze_sample_file(&sample_path) {
+                    Ok(r) => t.sample_root = r,
+                    Err(e) => crate::console::warn(format!("pitch analysis failed: {}", e)),
+                }
+            }
+            crate::audio::reload_song(song);
             Ok(Output::Text(opened(&path)))
         }
         "delay" => {
@@ -1129,11 +1364,19 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
                     let suggestions = find_similar_samples(&sample_query);
                     return Err(anyhow!("{}", not_found_sample(&sample_query, &suggestions)));
                 }
+                let analyzed_root = match crate::audio::pitch::analyze_sample_file(&resolved) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        crate::console::warn(format!("pitch analysis failed: {}", e));
+                        None
+                    }
+                };
                 let msg = {
                     let (_, track) = track_mut(&mut draft, &track_name)?;
                     let name = track.name.clone();
                     track.sample = Some(resolved.clone());
-                    track_sample(&name, &resolved)
+                    track.sample_root = analyzed_root;
+                    track_sample(&name, &resolved, track.sample_root)
                 };
                 out_lines.push(msg);
                 i = j;
@@ -1171,11 +1414,19 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
                     let suggestions = find_similar_samples(&sample_query);
                     return Err(anyhow!("{}", not_found_sample(&sample_query, &suggestions)));
                 }
+                let analyzed_root = match crate::audio::pitch::analyze_sample_file(&resolved) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        crate::console::warn(format!("pitch analysis failed: {}", e));
+                        None
+                    }
+                };
                 let msg = {
                     let (_, track) = track_mut(&mut draft, &track_name)?;
                     let name = track.name.clone();
                     track.sample = Some(resolved.clone());
-                    track_sample(&name, &resolved)
+                    track.sample_root = analyzed_root;
+                    track_sample(&name, &resolved, track.sample_root)
                 };
                 out_lines.push(msg);
                 i = j + 1;
@@ -1202,11 +1453,19 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
                     let suggestions = find_similar_samples(&sample_query);
                     return Err(anyhow!("{}", not_found_sample(&sample_query, &suggestions)));
                 }
+                let analyzed_root = match crate::audio::pitch::analyze_sample_file(&resolved) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        crate::console::warn(format!("pitch analysis failed: {}", e));
+                        None
+                    }
+                };
                 let msg = {
                     let (_, track) = track_mut(&mut draft, &track_name)?;
                     let name = track.name.clone();
                     track.sample = Some(resolved.clone());
-                    track_sample(&name, &resolved)
+                    track.sample_root = analyzed_root;
+                    track_sample(&name, &resolved, track.sample_root)
                 };
                 out_lines.push(msg);
                 i = j;
@@ -1423,10 +1682,10 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
     Ok(Some(Output::Text(out_lines.join("\n"))))
 }
 
-/// Check if a string looks like a pattern (contains x, X, or . at start)
+/// Check if a string looks like a pattern (visual tokens or note tokens at start)
 fn looks_like_pattern(s: &str) -> bool {
     let first = s.chars().next().unwrap_or(' ');
-    matches!(first, 'x' | 'X' | '.')
+    matches!(first, 'x' | 'X' | '.' | 'a'..='g' | 'A'..='G')
 }
 
 /// Check if a string looks like a gain value (-3db, +2db, -3, +2)
@@ -1888,17 +2147,114 @@ fn print_live_region(lines: Vec<String>) {
     print_external(msg);
 }
 
+fn parse_chord_symbol(sym: &str) -> Result<(u8, bool)> {
+    let s = sym.trim();
+    if s.is_empty() {
+        bail!("empty chord symbol");
+    }
+    let mut chars = s.chars();
+    let Some(letter) = chars.next() else {
+        bail!("empty chord symbol");
+    };
+    let mut pc = match letter.to_ascii_uppercase() {
+        'C' => 0u8,
+        'D' => 2u8,
+        'E' => 4u8,
+        'F' => 5u8,
+        'G' => 7u8,
+        'A' => 9u8,
+        'B' => 11u8,
+        _ => bail!("invalid chord root: {}", sym),
+    };
+
+    let mut rest = &s[letter.len_utf8()..];
+    if let Some(first) = rest.chars().next() {
+        match first {
+            '#' => {
+                pc = (pc + 1) % 12;
+                rest = &rest[1..];
+            }
+            'b' => {
+                pc = (pc + 11) % 12;
+                rest = &rest[1..];
+            }
+            _ => {}
+        }
+    }
+
+    let quality = rest.trim();
+    let is_minor = if quality.is_empty() {
+        false
+    } else if quality == "m" {
+        true
+    } else {
+        bail!("unsupported chord quality '{}': use major (C) or minor (Am)", sym);
+    };
+
+    Ok((pc, is_minor))
+}
+
+fn chord_triad_pitch_classes(root_pc: u8, minor: bool) -> [u8; 3] {
+    let third = if minor { 3 } else { 4 };
+    [root_pc, (root_pc + third) % 12, (root_pc + 7) % 12]
+}
+
+fn pitch_class_token(pc: u8) -> &'static str {
+    match pc % 12 {
+        0 => "c",
+        1 => "c#",
+        2 => "d",
+        3 => "d#",
+        4 => "e",
+        5 => "f",
+        6 => "f#",
+        7 => "g",
+        8 => "g#",
+        9 => "a",
+        10 => "a#",
+        11 => "b",
+        _ => "c",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::pattern::Pattern;
     use crate::model::track::TrackPlayback;
     use crate::audio::{LiveSnapshot, LiveTrackSnapshot};
+    use crate::pattern::visual::Step;
 
     fn song_with_track() -> Song {
         let mut song = Song::default();
         song.tracks.push(Track::new("Kick"));
         song
+    }
+
+    #[test]
+    fn prog_expands_chords_into_song_steps() {
+        let mut song = song_with_track();
+        handle_line(&mut song, "prog 1 \"C Am F G\"").expect("prog");
+
+        let Pattern::Visual(pat) = song.tracks[0].pattern.clone().expect("pattern");
+        let steps = crate::pattern::visual::parse_visual_pattern(&pat).expect("parse");
+        assert_eq!(steps.len(), song.steps as usize);
+
+        let chord_pcs = |i: usize| -> Vec<u8> {
+            let Step::Chord(events) = &steps[i] else {
+                panic!("expected chord at step {i}");
+            };
+            events
+                .iter()
+                .map(|ev| ev.note.base_note.expect("base_note").pitch_class)
+                .collect()
+        };
+
+        // steps=16, 4 chords => 4 steps per chord
+        assert_eq!(chord_pcs(0), vec![0, 4, 7]);  // C major
+        assert_eq!(chord_pcs(4), vec![9, 0, 4]);  // A minor
+        assert_eq!(chord_pcs(8), vec![5, 9, 0]);  // F major
+        assert_eq!(chord_pcs(12), vec![7, 11, 2]); // G major
     }
 
     #[test]

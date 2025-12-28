@@ -50,6 +50,27 @@ Modifiers are written immediately after a hit (order doesn’t matter).
 x+7   x-5   x+12
 ```
 
+### Notes (by name)
+
+You can also write **note tokens** directly (useful for melodies and chord progressions):
+
+```text
+c d# eb bb
+c4 d#4 eb4 bb4
+```
+
+Notes:
+- Sharps and flats are both accepted (`d#` == `eb`).
+- If the octave is omitted (e.g. `c`), it defaults to the track’s **detected root octave**.
+- Note tokens need a track **root note**. Groove will try to detect this from the sample (shown in the TUI `NOTE` column). You can override it with `root <track> <note>` or re-run detection with `analyze <track>`.
+
+Modifiers still work the same way:
+
+```text
+c+12v80
+(c e g)?50%
+```
+
 ### Velocity (0–127)
 
 ```text
@@ -104,6 +125,7 @@ x+(0,3,7)         # minor triad
 
 ```text
 (x x+4 x+7)
+(c e g)
 ```
 
 ## Groups and repeats

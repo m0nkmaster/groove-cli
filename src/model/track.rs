@@ -4,6 +4,14 @@ use serde::{Deserialize, Serialize};
 use super::fx::Delay;
 use super::pattern::Pattern;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct SampleRoot {
+    pub freq_hz: f32,
+    pub midi_note: i32,
+    pub cents: f32,
+    pub confidence: f32,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TrackPlayback {
@@ -29,6 +37,8 @@ impl TrackPlayback {
 pub struct Track {
     pub name: String,
     pub sample: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_root: Option<SampleRoot>,
     pub delay: Delay,
     pub pattern: Option<Pattern>,
     /// Named pattern variations (e.g., "a", "b", "fill")
@@ -51,6 +61,7 @@ impl Track {
         Self {
             name: name.into(),
             sample: None,
+            sample_root: None,
             delay: Delay::default(),
             pattern: None,
             variations: HashMap::new(),

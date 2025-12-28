@@ -1,9 +1,11 @@
 use groove_cli::pattern::visual::{
-    parse_visual_pattern, CycleCondition, Gate, Nudge, ParamLock, Step, StepEvent, StepNote,
+    parse_visual_pattern, CycleCondition, Gate, Nudge, NoteToken, ParamLock, Step, StepEvent,
+    StepNote,
 };
 
 fn default_note() -> StepNote {
     StepNote {
+        base_note: None,
         pitch_offset: 0,
         velocity: None,
         accent: false,
@@ -20,6 +22,45 @@ fn hit_step(note: StepNote) -> Step {
         nudge: None,
         gate: None,
     })
+}
+
+#[test]
+fn parses_note_tokens_with_sharps_and_flats() {
+    let steps = parse_visual_pattern("c d# eb bb").expect("parse");
+    assert_eq!(steps.len(), 4);
+
+    let expect = |idx: usize, pitch_class: u8| {
+        let Step::Hit(ev) = &steps[idx] else {
+            panic!("expected hit at {idx}");
+        };
+        assert_eq!(
+            ev.note.base_note,
+            Some(NoteToken {
+                pitch_class,
+                octave: None
+            })
+        );
+    };
+
+    // C, D#, Eb, Bb
+    expect(0, 0);
+    expect(1, 3);
+    expect(2, 3);
+    expect(3, 10);
+}
+
+#[test]
+fn parses_note_chord_group() {
+    let steps = parse_visual_pattern("(c e g)").expect("parse");
+    assert_eq!(steps.len(), 1);
+
+    let Step::Chord(chord) = &steps[0] else {
+        panic!("expected chord");
+    };
+    assert_eq!(chord.len(), 3);
+    assert_eq!(chord[0].note.base_note, Some(NoteToken { pitch_class: 0, octave: None }));
+    assert_eq!(chord[1].note.base_note, Some(NoteToken { pitch_class: 4, octave: None }));
+    assert_eq!(chord[2].note.base_note, Some(NoteToken { pitch_class: 7, octave: None }));
 }
 
 #[test]

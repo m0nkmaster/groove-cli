@@ -152,6 +152,23 @@ Preview only (prints without applying):
 gen "euclid(5,16)"
 ```
 
+### Progressions (chords)
+
+Generate a chord progression as a **note/chord pattern** (major/minor triads):
+
+```text
+prog synth "C Am F G"        # uses the current song steps (default 16)
+prog synth "C Am F G" 64     # total steps (chords are repeated to fill)
+```
+
+### Inspect resolved notes
+
+Print the active pattern with notes resolved using the track’s root note:
+
+```text
+notes synth
+```
+
 ---
 
 ## Samples
@@ -186,6 +203,23 @@ kick ~ "linn snare class" -3db
 ```
 
 In the **TUI**, when multiple matches exist, pressing **Tab cycles** through matches and inserts the current selection into the command line.
+
+### Root note (pitch) detection / override
+
+When you set a sample, Groove will try to detect its **root note** (shown in the TUI `NOTE` column). Note tokens (like `c d# eb`) depend on having a root note.
+
+- Re-run detection: `analyze <track>`
+
+```text
+analyze synth
+```
+
+- Override manually: `root <track> <note>`
+
+```text
+root synth c4
+root synth db3
+```
 
 ### List/search samples
 

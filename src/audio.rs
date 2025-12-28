@@ -38,8 +38,9 @@ use crate::pattern::visual::Gate;
 pub mod timing;
 pub mod compile;
 pub mod effects;
+pub mod pitch;
 
-use compile::{visual_to_tokens_and_pitches, CompiledPattern, CompiledStep};
+use compile::{visual_to_tokens_and_pitches_with_root, CompiledPattern, CompiledStep};
 use timing::{base_step_period, gate_duration, pitch_semitones_to_speed, step_period_with_swing, velocity_to_gain};
 use effects::{DelayEffect, parse_delay_time};
 
@@ -365,8 +366,11 @@ fn build_config(song: &Song) -> SequencerConfig {
                 continue;
             }
         };
+        let root_midi = t.sample_root.map(|r| r.midi_note);
         let compiled = match t.active_pattern() {
-            Some(crate::model::pattern::Pattern::Visual(s)) => visual_to_tokens_and_pitches(s),
+            Some(crate::model::pattern::Pattern::Visual(s)) => {
+                visual_to_tokens_and_pitches_with_root(s, root_midi)
+            }
             None => CompiledPattern::empty(),
         };
         let muted = if any_solo { !t.solo } else { t.mute };

@@ -61,8 +61,9 @@ impl Widget for TrackerGrid<'_> {
         let col_num = 3usize;
         let col_name = 10usize;
         let col_sample = 14usize;
+        let col_note = 10usize;
         let col_len = 4usize;
-        let prefix_width = col_num + 1 + col_name + 1 + col_sample + 1 + col_len + 2;
+        let prefix_width = col_num + 1 + col_name + 1 + col_sample + 1 + col_note + 1 + col_len + 2;
         if area.width as usize <= prefix_width + 4 {
             // Too narrow to show the grid cleanly.
             let y = area.y;
@@ -94,7 +95,8 @@ impl Widget for TrackerGrid<'_> {
         buf.set_string(area.x, y, &format!("{:>w$}", "#", w = col_num), header_style);
         buf.set_string(area.x + (col_num + 1) as u16, y, &format!("{:<w$}", "TRACK", w = col_name), header_style);
         buf.set_string(area.x + (col_num + 1 + col_name + 1) as u16, y, &format!("{:<w$}", "SAMPLE", w = col_sample), header_style);
-        buf.set_string(area.x + (col_num + 1 + col_name + 1 + col_sample + 1) as u16, y, &format!("{:>w$}", "LEN", w = col_len), header_style);
+        buf.set_string(area.x + (col_num + 1 + col_name + 1 + col_sample + 1) as u16, y, &format!("{:<w$}", "NOTE", w = col_note), header_style);
+        buf.set_string(area.x + (col_num + 1 + col_name + 1 + col_sample + 1 + col_note + 1) as u16, y, &format!("{:>w$}", "LEN", w = col_len), header_style);
         
         // Beat markers - use song.steps as reference
         let max_display_steps = grid_width.min(song.steps as usize);
@@ -164,11 +166,34 @@ impl Widget for TrackerGrid<'_> {
             };
             buf.set_string(area.x + (col_num + 1 + col_name + 1) as u16, y, &format!("{:<w$}", sample_disp, w = col_sample), sample_style);
 
+            // Root note (detected or manually set)
+            let note = track
+                .sample_root
+                .map(|r| crate::audio::pitch::midi_note_to_display(r.midi_note))
+                .unwrap_or_else(|| "—".to_string());
+            let note_disp = if note.len() > col_note { &note[..col_note] } else { &note };
+            let note_style = if track.sample_root.is_some() {
+                Style::default().fg(Color::Rgb(140, 200, 140))
+            } else {
+                dim
+            };
+            buf.set_string(
+                area.x + (col_num + 1 + col_name + 1 + col_sample + 1) as u16,
+                y,
+                &format!("{:<w$}", note_disp, w = col_note),
+                note_style,
+            );
+
             // Pattern length
             let steps = Self::parse_steps(track);
             let step_count = steps.len();
             let len_str = if step_count > 0 { format!("{}", step_count) } else { "—".to_string() };
-            buf.set_string(area.x + (col_num + 1 + col_name + 1 + col_sample + 1) as u16, y, &format!("{:>w$}", len_str, w = col_len), dim);
+            buf.set_string(
+                area.x + (col_num + 1 + col_name + 1 + col_sample + 1 + col_note + 1) as u16,
+                y,
+                &format!("{:>w$}", len_str, w = col_len),
+                dim,
+            );
 
             // Pattern grid
             if step_count == 0 {
@@ -325,7 +350,7 @@ mod tests {
             .render(area, &mut buf);
 
         let y = 1u16; // first track row (header is y=0)
-        let prefix_width = 3 + 1 + 10 + 1 + 14 + 1 + 4 + 2;
+        let prefix_width = 3 + 1 + 10 + 1 + 14 + 1 + 10 + 1 + 4 + 2;
         let grid_start_x = prefix_width as u16;
 
         let cell_expected = &buf[(grid_start_x + 2, y)];

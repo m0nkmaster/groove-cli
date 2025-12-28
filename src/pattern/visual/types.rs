@@ -8,6 +8,12 @@ pub enum Step {
     Chord(Vec<StepEvent>),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NoteToken {
+    pub pitch_class: u8,    // 0..=11 (C..B)
+    pub octave: Option<i8>, // MIDI octave number (C4 is octave 4)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct StepEvent {
     pub note: StepNote,
@@ -29,6 +35,7 @@ impl Default for StepEvent {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StepNote {
+    pub base_note: Option<NoteToken>,
     pub pitch_offset: i32,
     pub velocity: Option<u8>,
     pub accent: bool,
@@ -40,6 +47,7 @@ pub struct StepNote {
 impl Default for StepNote {
     fn default() -> Self {
         Self {
+            base_note: None,
             pitch_offset: 0,
             velocity: None,
             accent: false,

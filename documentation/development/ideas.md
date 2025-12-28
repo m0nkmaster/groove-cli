@@ -6,3 +6,11 @@ Some ideas that it would be good to flesh out and potentially use at some point.
 
 ## Synth
 Full-blown synthesizer that we have settings rather than using a sample for all instruments.
+
+## Quanisation
+
+Simple
+
+## Transition waiting
+
+The ability to change sequences at the end of a loop instead of instantly. Probably have this as the default.

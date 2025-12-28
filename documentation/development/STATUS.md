@@ -23,6 +23,7 @@ This is a “source-of-truth” snapshot of what `groove-cli` currently ships, p
 - **Background transport thread** with live updates via `audio::reload_song`.
 - **Pattern playback** (implemented semantics):
   - pitch offsets (`+N` / `-N`)
+  - note tokens (e.g. `c d# eb`) when a track root note is available
   - velocity (`vN`) + accent (`X`)
   - probability (`?…`)
   - ratchets (`{N}`)
@@ -37,6 +38,11 @@ This is a “source-of-truth” snapshot of what `groove-cli` currently ships, p
 
 - YAML save/load via `serde_yaml` (`save …`, `open …`, `--open …`).
 - **REPL mode** supports file watching + polling fallback that reloads **audio** on file changes.
+
+### Pitch / root note
+
+- Tracks store an optional detected root note (`sample_root`) used by note tokens.
+- Root detection is run when setting a sample and on `open` (best-effort), and can be re-run with `analyze <track>` or overridden with `root <track> <note>`.
 
 ### Generators
 
