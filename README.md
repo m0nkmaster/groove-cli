@@ -1,153 +1,96 @@
 # Groove CLI
 
-A command-line groovebox with a powerful REPL for building patterns and playing samples. Music making for software engineers!
+A terminal groovebox with a tracker-style TUI and a fast command language for building patterns and playing samples.
 
 ## Features
 
-- **Pattern Sequencer** with velocity, chords, ratchets, probability, and micro-timing
-- **Tempo-synced Delay** effect per track
-- **Rhai Scripting** for generative patterns (`euclid`, `random`, `fill`, and more)
-- **Pattern Variations** for live switching between arrangements
-- **AI-powered Pattern Generation** via local LLM (Ollama)
-- **Fuzzy Sample Search** with Tab completion
-- **Hot Reload** from YAML files with live playback updates
-- **Live View** showing playhead position and track status
-- **Beautiful UI** with emoji feedback and styled output
+- **Default TUI** (Ratatui): live tracker grid + command line + message log
+- **Classic REPL** (`--repl`): `rustyline` prompt with history + tab completion
+- **Visual pattern DSL**: pitch (`+N/-N`), velocity (`vN`), probability (`?…`), ratchets (`{N}`), chords, gate/ties
+- **Per-track delay**: tempo-synced feedback delay (time / feedback / mix)
+- **Scripted generators (Rhai)**: `euclid`, `random`, `fill`, `invert`, `rotate`, `humanize`, …
+- **AI pattern generation (optional)**: OpenAI Responses API (`OPENAI_API_KEY`)
+- **Fuzzy sample selection**: `track ~ query` with Tab completion
+- **YAML save/load**: `save …`, `open …`, `--open …`
 
 ## Install
 
-Prerequisites: Rust toolchain (`rustup`), audio backend supported by `rodio` (CoreAudio/macOS, WASAPI/Windows, ALSA/PulseAudio/Linux).
+Prereqs:
+- Rust toolchain (`rustup`)
+- A supported audio backend for `rodio` (CoreAudio/macOS, WASAPI/Windows, ALSA/PulseAudio/Linux)
+
+Build:
 
 ```bash
 cargo build --release
+```
+
+Run:
+
+```bash
 ./target/release/groove-cli
 ```
 
-Or run directly:
+Or run in dev:
+
 ```bash
 cargo run --
 ```
 
-## Quick Start
+### Flags
 
-```
-♪ 120 ⏹ › + kick
-  ✓ added kick
+- `--open <file.yaml>` / `-o <file.yaml>`: open a song on startup
+- `--repl`: start in classic REPL mode (default is the TUI)
+- `--quiet` / `-q`: reduce the REPL startup banner (REPL mode)
 
-♪ 120 ⏹ › kick ~ 909/kick
-  kick  🔊 samples/kits/harsh 909/Kick.wav
+## Quick start
 
-♪ 120 ⏹ › kick x...x...x...x...
-  kick  ●···●···●···●···
+These commands work in both the TUI and the REPL:
 
-♪ 120 ⏹ › go
-  ▶ playing
-```
+```text
++ kick
+kick ~ 909/kick
+kick x...x...x...x...
 
-## Command Examples
++ snare
+snare ~ snare
+snare ....x.......x...
 
-```
-+ snare                    # add track
-snare ~ 909/snare          # set sample (fuzzy match)
-snare ..x...x...x...x.     # set pattern
-snare -2db                 # set gain
-snare mute                 # mute track
-kick.fill x.x.x.x.x.x.x.x. # create variation
-kick > fill                # switch to variation
-kick gen euclid(5,16)      # generate pattern
-120                        # set tempo
-go                         # play
-.                          # stop
-list                       # show tracks
-?                          # help
+go
 ```
 
-## Pattern Notation
+Stop:
 
-| Syntax | Description |
-|--------|-------------|
-| `x` or `X` | Hit (X = accented) |
-| `.` | Rest |
-| `_` | Tie/sustain |
-| `x+7` | Pitch up 7 semitones |
-| `xv80` | Velocity 80 (0-127) |
-| `x?50%` | 50% probability |
-| `x{3}` | Ratchet (3 sub-hits) |
-| `(x x+4 x+7)` | Chord |
-| `x=3/4` | Gate length 75% |
-
-Example: `x... xv60?50% x{2}. X`
-
-## Scripted Patterns
-
-Generate patterns with Rhai:
-```
-kick gen euclid(5,16)
-  kick  🎲 ●··●·●··●·●··●··
-
-kick gen random(0.3,42)
-  kick  🎲 ●···●·····●··●··
+```text
+.
 ```
 
-Built-in generators: `euclid(k, n)`, `random(density, seed)`, `fill(length)`, `invert(pattern)`, `rotate(pattern, n)`
+## AI setup (optional)
 
-## Pattern Variations
+Set env vars (or put them in a `.env` file in the repo root):
 
-Store multiple patterns per track and switch live:
-```
-kick.a x...x...x...x...
-kick.b x.x.x.x.x.x.x.x.
-kick > b
-  kick  → b
+```bash
+export OPENAI_API_KEY="..."
+# optional
+export OPENAI_MODEL="gpt-5.2"
 ```
 
-## Effects
+Use:
 
-Per-track delay:
+```text
+kick ai "four on the floor"   # applies to the track
+ai kick "funky breakbeat"     # prints suggestions
 ```
-kick delay on
-kick delay 1/8 0.4 0.3
-  kick  🔁 delay 1/8 fb:0.40 mix:0.30
-```
-
-## AI Pattern Generation
-
-Generate patterns using a local LLM (requires Ollama):
-```
-kick ai "funky"
-  ✨ generating...
-  kick  ✨ suggestions:
-     1) ●··●··●·●···●···
-     2) ●···●·●···●·●···
-```
-
-## Commands Reference
-
-See `documentation/user-guide/commands.md` for the full command list.
-
-Key commands:
-- `go` / `play` — Start playback
-- `.` / `stop` — Stop playback
-- `120` — Set tempo (just type a number)
-- `+ name` — Add track
-- `- name` — Remove track
-- `name x...` — Set pattern
-- `name ~ sample` — Set sample
-- `name -3db` — Set gain
-- `name mute` / `unmute` / `solo` — Mix control
-- `name.var x...` — Set variation
-- `name > var` — Switch variation
-- `name gen expr` — Generate pattern
-- `save file.yaml` / `open file.yaml` — Persistence
-- `:live on` — Enable live view
-- `?` — Show help
 
 ## Documentation
 
 - [Quickstart Guide](documentation/user-guide/quickstart.md)
 - [Command Reference](documentation/user-guide/commands.md)
 - [Pattern Notation](documentation/user-guide/pattern-notation.md)
+- [Development Guide](documentation/development/DEVELOPMENT.md)
 
 ## License
 
 MIT
+
+

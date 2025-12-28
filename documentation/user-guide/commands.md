@@ -1,209 +1,307 @@
 # Command Reference
 
-## Quick Reference
+Groove CLI has **one command language** used by both the **default TUI** and the **classic REPL** (`--repl`).
 
-| Type | Action |
-|------|--------|
-| `go` / `play` | ▶ Start playback |
-| `.` / `stop` | ⏹ Stop playback |
-| `120` / `bpm 120` | Set tempo |
-| `+ kick` | Add track |
-| `- kick` | Remove track |
-| `list` / `ls` | Show all tracks |
-| `kick x...x...` | Set pattern |
-| `kick ~ 909/kick` | Set sample (fuzzy search) |
-| `kick -3db` | Set gain |
-| `kick mute` | Mute track |
-| `kick unmute` | Unmute track |
-| `kick solo` | Toggle solo |
-| `kick delay on` | Enable delay |
-| `kick.fill x.x.` | Set variation |
-| `kick > fill` | Switch to variation |
-| `kick gen euclid(5,16)` | Generate pattern |
-| `kick ai "funky"` | AI pattern suggestions |
-| `save song.yaml` | Save song |
-| `open song.yaml` | Load song |
-| `?` / `:help` | Show help |
-| `:live on` | Enable live view |
-| `:q` | Quit |
+## Track identifiers
 
----
+Many commands accept either:
 
-## Transport
+- A **1-based track index** (e.g. `1`, `2`, …)
+- A **track name** (case-insensitive, e.g. `kick`, `Snare`, `Hi-Hat`)
 
-| Command | Description |
-|---------|-------------|
-| `go` or `play` | Start playback |
-| `.` or `stop` | Stop playback |
-| `120` or `bpm 120` | Set tempo to 120 BPM |
-| `swing <percent>` | Set swing (0-100) |
+## Command styles
 
----
+There are three equivalent ways to do most things:
 
-## Track Management
+### 1) Track-first (recommended)
 
-| Command | Description |
-|---------|-------------|
-| `+ name` or `track name` | Add a new track |
-| `- name` or `remove name` | Remove track |
-| `list` or `ls` | Show all tracks with patterns |
+Commands start with a track name:
 
-Track names must be single words (no spaces). Examples: `kick`, `snare`, `hihat`, `hi-hat`.
-
----
-
-## Track Commands
-
-All track commands start with the track name, followed by the action:
-
-### Pattern
-
-```
-kick x...x...x...x...
-snare ..x...x...x...x.
-hihat xxxxxxxxxxxxxxxx
-```
-
-Patterns use `x` for hits and `.` for rests. Spaces are ignored for readability:
-
-```
-kick x... x... x... x...
-```
-
-### Sample
-
-Use `~` to set a sample with fuzzy matching:
-
-```
+```text
 kick ~ 909/kick
-snare ~ snare
-hihat ~ hat
+kick x...x...x...x...
+kick -3db
+kick mute
+kick delay 1/8 0.4 0.3
+kick.fill x.x.x.x.x.x.x.x.
+kick > fill
 ```
 
-Tab completion shows matching samples as you type.
+### 2) Index-based (explicit)
+
+Commands start with an action and a track id/name:
+
+```text
+sample kick 909/kick
+pattern kick x...x...x...x...
+gain kick -3
+mute kick on
+delay kick 1/8 0.4 0.3
+```
+
+### 3) Dot-chaining (sugar for index-based)
+
+Calls can be chained with `.` and parentheses:
+
+```text
+track("Kick").sample(1, "samples/kits/harsh 909/Kick.wav").pattern(1, "x...x...x...x...")
+```
+
+This expands into the index-based commands: `track …`, `sample …`, `pattern …` (in order).
+
+---
+
+## Global / transport
+
+- **Play**: `go` or `play`
+- **Stop**: `.` or `stop`
+- **Set BPM**: type a number (e.g. `140`) or `bpm 140`
+- **Set swing**: `swing <percent>` (0–100)
+- **Set steps (UI bar length)**: `steps <number>`
+
+---
+
+## Track management
+
+- **Add track**:
+  - `+ name`
+  - `track name`
+- **Remove track**:
+  - `- name` or `- 1`
+  - `remove name` or `remove 1`
+- **List tracks**: `list` or `ls`
+
+Notes:
+- Track names must be **single words** (no spaces).
+- Remove accepts either index or name.
+
+---
+
+## Patterns
+
+### Set main pattern
+
+Track-first:
+
+```text
+kick x...x...x...x...
+```
+
+Index-based:
+
+```text
+pattern kick x...x...x...x...
+```
+
+If you want to include spaces, comments, or complex group syntax in interactive input, prefer the `pattern … "…"` form with quotes:
+
+```text
+pattern kick "x... x... x... x..."
+```
+
+### Variations
+
+- **Define** a variation: `track.var <pattern>`
+
+```text
+kick.fill x.x.x.x.x.x.x.x.
+```
+
+- **Switch** variation: `track > var`
+
+```text
+kick > fill
+kick > main
+```
+
+- **List / switch (index-based)**: `var <track> [name]`
+
+```text
+var kick
+var kick fill
+```
+
+### Generate (Rhai)
+
+Track-first:
+
+```text
+kick gen euclid(5,16)
+```
+
+Index-based:
+
+```text
+gen kick euclid(5,16)
+```
+
+Preview only (prints without applying):
+
+```text
+gen "euclid(5,16)"
+```
+
+---
+
+## Samples
+
+### Set sample (fuzzy)
+
+Track-first:
+
+```text
+kick ~ 909/kick
+```
+
+Index-based:
+
+```text
+sample kick 909/kick
+```
+
+Tab completion works best with the track-first form: `kick ~ <Tab>`.
+
+### List/search samples
+
+- **REPL**: `samples [filter]` lists matching samples grouped by directory
+- **TUI**: typing `samples …` shows a short match list (search helper)
+
+### Preview a sample (one-shot)
+
+```text
+preview 909/kick
+preview samples/kits/harsh 909/Kick.wav
+```
+
+### Browse (REPL only)
+
+The interactive browser is **only available in `--repl` mode**:
+
+```text
+browse samples
+```
+
+---
+
+## Mix controls
 
 ### Gain
 
-```
+Track-first (supports `db` suffix):
+
+```text
 kick -3db
 snare +2db
-hihat -6db
 ```
 
-### Mute / Solo
+Index-based (number only; value is in dB):
 
+```text
+gain kick -3
 ```
+
+### Mute / solo
+
+Track-first:
+
+```text
 kick mute
 kick unmute
-snare solo
+kick solo        # toggles
 ```
 
-### Delay
+Index-based:
 
-```
-kick delay on
-kick delay off
-kick delay 1/8 0.4 0.3    # time, feedback, mix
-```
-
----
-
-## Variations
-
-Store multiple patterns per track and switch between them:
-
-```
-kick x...x...x...x...       # main pattern
-kick.fill x.x.x.x.x.x.x.x.  # define "fill" variation
-kick > fill                  # switch to fill
-kick > main                  # back to main
+```text
+mute kick         # toggles
+mute kick on
+mute kick off
+solo kick         # toggles
+solo kick on
+solo kick off
 ```
 
 ---
 
-## Pattern Generation
+## Delay (per track)
 
-### Scripted (Rhai)
+Track-first:
 
-```
-kick gen euclid(5,16)
-kick gen random(0.3,42)
-kick gen fill(16)
-```
-
-Built-in generators:
-- `euclid(k, n)` — Euclidean rhythm (k hits in n steps)
-- `random(density, seed)` — Random pattern (density 0.0-1.0)
-- `fill(length)` — Drum fill pattern
-- `invert(pattern)` — Swap hits and rests
-- `rotate(pattern, n)` — Rotate pattern by n steps
-
-### AI Generation
-
-```
-kick ai "funky"
-snare ai "breakbeat"
+```text
+snare delay on
+snare delay 1/8 0.4 0.3    # time, feedback (0..1), mix (0..1)
+snare delay off
 ```
 
-Requires Ollama running locally (`http://localhost:11434`).
+Index-based:
+
+```text
+delay snare on
+delay snare 1/8 0.4 0.3
+delay snare time "1/8" fb 0.4 mix 0.3
+```
+
+---
+
+## Playback + timing (per track)
+
+- **Playback mode**: `playback <track> <mode>`
+
+Modes:
+- `gate` (default): hit is clipped to a step (ties extend it)
+- `mono`: stops the previous voice before starting a new one
+- `one_shot`: overlapping voices allowed, sample plays out
+
+```text
+playback kick gate
+playback kick mono
+playback kick one_shot
+```
+
+- **Division (tokens per beat)**: `div <track> <1..64>`
+
+```text
+div kick 4     # 16ths at the current BPM
+div kick 8     # 32nds
+```
+
+---
+
+## AI
+
+Apply directly to a track (uses the first suggestion):
+
+```text
+kick ai "four on the floor"
+```
+
+Generate suggestions (requires `OPENAI_API_KEY`):
+
+```text
+ai kick "funky breakbeat"
+```
+
+Optional env vars:
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL` (default: `gpt-5.2`)
 
 ---
 
 ## Files
 
-| Command | Description |
-|---------|-------------|
-| `save song.yaml` | Save song to YAML |
-| `open song.yaml` | Load song from YAML |
+- **Save**: `save <file.yaml>`
+- **Open**: `open <file.yaml>`
 
 ---
 
-## Meta Commands
+## Meta / UI
 
-| Command | Description |
-|---------|-------------|
-| `?` or `:help` | Show help |
-| `:live on` | Enable live playhead view |
-| `:live off` | Disable live view |
-| `:q` or `:quit` | Exit |
+- **Help**: `?` or `:help`
+- **Quit**:
+  - REPL: `:q`, `:quit`, `:exit` (or Ctrl-D)
+  - TUI: `:q`, `:quit`, `quit`, `exit` (or Ctrl-C)
+- **REPL live view (REPL only)**:
+  - `:live` / `:live on` / `:live off`
+- **Clear screen (REPL)**: `clear`
 
----
 
-## Pattern Notation
-
-| Syntax | Description |
-|--------|-------------|
-| `x` or `X` | Hit (X = accented) |
-| `.` | Rest |
-| `_` | Tie/sustain |
-| `x+7` | Pitch up 7 semitones |
-| `xv80` | Velocity 80 (0-127) |
-| `x?50%` | 50% probability |
-| `x{3}` | Ratchet (3 sub-hits) |
-| `(x x+4 x+7)` | Chord |
-| `x=3/4` | Gate length 75% |
-
-Example: `x... xv60?50% x{2}. X`
-
----
-
-## Legacy Commands
-
-These older command styles still work for backwards compatibility:
-
-| Old Style | New Style |
-|-----------|-----------|
-| `pattern kick "x..."` | `kick x...` |
-| `sample kick "path"` | `kick ~ path` |
-| `mute kick` | `kick mute` |
-| `gain kick -3` | `kick -3db` |
-| `bpm 120` | `120` |
-
----
-
-## Tips
-
-- **Tab completion**: Works for track names, sample paths, and commands
-- **Fuzzy sample search**: Type part of a sample name after `~` and Tab
-- **Pattern spacing**: Spaces in patterns are ignored for readability
-- **Quick tempo**: Just type a number (e.g., `120`) to set BPM

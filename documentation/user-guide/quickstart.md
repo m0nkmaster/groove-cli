@@ -1,196 +1,178 @@
-# Quickstart Guide
+# Quickstart
 
-Get making beats in minutes with groove-cli.
+Groove CLI is a terminal groovebox: you create tracks, assign samples, type patterns, and hit play.
 
-## Launch the REPL
+## Install & run
+
+Build and run:
 
 ```bash
-cargo run --
-# or
+cargo build --release
 ./target/release/groove-cli
 ```
 
-Optional: Open an existing song with live reload:
+Or during development:
+
 ```bash
-cargo run -- -o songs/song.yaml
+cargo run --
 ```
 
-You'll see:
-```
-♪ groove — type ? for help
-♪ 120 ⏹ ›
-```
+### Modes
 
-## Create Your First Beat
+- **Default: TUI** (tracker-style UI with a command line). This is what you get with no flags.
+- **Classic REPL**: `groove-cli --repl` (line-based prompt with `rustyline`).
 
-### 1. Add a kick track
+### Open a song on startup
 
-```
-♪ 120 ⏹ › + kick
-  ✓ added kick
+```bash
+groove-cli --open songs/song.yaml
+# or
+groove-cli -o songs/song.yaml
 ```
 
-### 2. Load a sample
+In **REPL mode**, if you start with `--open …` (or if `song.yaml` exists in the current directory) the app will watch the file and **reload audio** when it changes.
 
-```
-♪ 120 ⏹ › kick ~ 909/kick
-  kick  🔊 samples/kits/harsh 909/Kick.wav
-```
+## Make your first beat (TUI or REPL)
 
-💡 **Tip:** Type `kick ~` then press Tab to browse samples!
+All commands below work in both modes unless noted.
 
-### 3. Set a pattern
+### 1) Add tracks
 
-```
-♪ 120 ⏹ › kick x...x...x...x...
-  kick  ●···●···●···●···
+```text
++ kick
++ snare
++ hat
 ```
 
-Pattern notation: `x` = hit, `.` = rest
+Track names are **single words** (no spaces). You can use `- name` to remove them later.
 
-### 4. Play it!
+### 2) Pick samples (with Tab completion)
 
-```
-♪ 120 ⏹ › go
-  ▶ playing
-```
+Use `~` for fuzzy sample selection:
 
-Enable the live view to see playhead position:
-```
-♪ 120 ▶ › :live on
-  👁 live view on
+```text
+kick ~ 909/kick
+snare ~ snare
+hat ~ hat
 ```
 
-## Add More Tracks
+- **Tab completion**: in the TUI, press **Tab** after `~` to see matches; in the REPL, Tab completion is provided by `rustyline`.
+- **Paths with spaces**: `track ~ …` accepts paths with spaces without extra quoting.
 
-```
-♪ 120 ▶ › + snare
-  ✓ added snare
+### 3) Enter patterns
 
-♪ 120 ▶ › snare ~ snare
-  snare  🔊 samples/kits/harsh 909/Snare.wav
-
-♪ 120 ▶ › snare ....x.......x...
-  snare  ····●·······●···
-
-♪ 120 ▶ › + hihat
-  ✓ added hihat
-
-♪ 120 ▶ › hihat ~ hat
-  hihat  🔊 samples/kits/harsh 909/Closed Hat.wav
-
-♪ 120 ▶ › hihat x.x.x.x.x.x.x.x.
-  hihat  ●·●·●·●·●·●·●·●·
+```text
+kick x...x...x...x...
+snare ....x.......x...
+hat x.x.x.x.x.x.x.x.
 ```
 
-## Adjust the Mix
+### 4) Play / stop
 
-```
-♪ 120 ▶ › hihat -6db
-  hihat  🎚 -6.0db
-
-♪ 120 ▶ › snare mute
-  snare  🔇 muted
-
-♪ 120 ▶ › kick solo
-  kick  🎤 solo
+```text
+go
+.          # stop (a single dot)
 ```
 
-## Add Some Flavor
+Aliases: `play` / `stop`.
 
-### Velocity and accents
-```
-♪ 120 ▶ › hihat xv60.X.xv40.x...
-  hihat  ●·◉·●·●···
-```
-X = accent, v60 = velocity 60
+### 5) Tempo + swing
 
-### Probability (generative feel)
-```
-♪ 120 ▶ › hihat x.x?50%.x.x?30%
-```
-50% and 30% chance hits
-
-### Ratchets (rolls)
-```
-♪ 120 ▶ › snare ....x{3}.......x
-```
-Rapid sub-hits
-
-### Delay effect
-```
-♪ 120 ▶ › snare delay on
-  snare  🔁 delay on
-
-♪ 120 ▶ › snare delay 1/8 0.3 0.2
-  snare  🔁 delay 1/8 fb:0.30 mix:0.20
+```text
+140        # typing a number sets BPM
+swing 15   # 0..100 (%)
 ```
 
-## Generate Patterns with Code
+Optional: set the UI “bar length” (used for the TUI playhead display):
 
-Use Rhai scripts for algorithmic patterns:
-
-```
-♪ 120 ▶ › kick gen euclid(5,16)
-  kick  🎲 ●··●·●··●·●··●··
+```text
+steps 16
 ```
 
-Built-in generators:
-- `euclid(k, n)` — Euclidean rhythms
-- `random(density, seed)` — Random patterns
-- `fill(length)` — Drum fills
+## Mix & performance
 
-## Pattern Variations
+### Gain
 
-Store multiple patterns per track for live switching:
+Track-first (recommended):
 
-```
-♪ 120 ▶ › kick.a x...x...x...x...
-  kick.a  ●···●···●···●···
-
-♪ 120 ▶ › kick.fill x.x.x.x.x.x.x.x.
-  kick.fill  ●·●·●·●·●·●·●·●·
-
-♪ 120 ▶ › kick > fill
-  kick  → fill
-
-♪ 120 ▶ › kick > main
-  kick  → main
+```text
+hat -6db
+snare +2db
 ```
 
-## Save Your Work
+### Mute / solo
 
-```
-♪ 120 ▶ › save my-beat.yaml
-  💾 saved my-beat.yaml
-
-♪ 120 ▶ › open my-beat.yaml
-  📂 opened my-beat.yaml
+```text
+hat mute
+hat unmute
+kick solo   # toggles
 ```
 
-## Quick Reference
+## Delay (per track)
 
-| Command | What it does |
-|---------|--------------|
-| `go` / `play` | Start playback |
-| `.` / `stop` | Stop playback |
-| `120` | Set tempo to 120 |
-| `+ name` | Add track |
-| `- name` | Remove track |
-| `list` / `ls` | Show all tracks |
-| `name x...` | Set pattern |
-| `name ~ sample` | Set sample |
-| `name -3db` | Set gain |
-| `name mute` | Mute track |
-| `name solo` | Toggle solo |
-| `?` | Show help |
-| `:live on` | Enable live view |
-| `:q` | Quit |
+```text
+snare delay on
+snare delay 1/8 0.40 0.25   # time, feedback (0..1), mix (0..1)
+snare delay off
+```
 
-## Next Steps
+## Variations (live pattern switching)
 
-- Read the [Command Reference](commands.md) for all options
-- Study [Pattern Notation](pattern-notation.md) for advanced patterns
-- Try the AI generator: `kick ai "funky breakbeat"`
+Define a variation:
 
-Happy beat making! 🥁
+```text
+kick.fill x.x.x.x.x.x.x.x.
+```
+
+Switch:
+
+```text
+kick > fill
+kick > main
+```
+
+## Generate patterns with code (Rhai)
+
+```text
+kick gen euclid(5,16)
+hat gen random(0.35, 42)
+snare gen fill(16)
+```
+
+Built-ins include: `euclid(k,n)`, `random(density, seed)`, `fill(length)`, `repeat(pattern, n)`, `invert(pattern)`, `rotate(pattern, n)`, `humanize(pattern, amount)`.
+
+## AI pattern generation (OpenAI)
+
+Set env vars (or put them in a `.env` file):
+
+```bash
+export OPENAI_API_KEY="..."
+# optional
+export OPENAI_MODEL="gpt-5.2"
+```
+
+Apply a suggestion directly to a track:
+
+```text
+kick ai "four on the floor"
+```
+
+Or generate suggestions without applying:
+
+```text
+ai kick "funky breakbeat"
+```
+
+## Save / load
+
+```text
+save my-song.yaml
+open my-song.yaml
+```
+
+## Next
+
+- [Command Reference](commands.md)
+- [Pattern Notation](pattern-notation.md)
+
+

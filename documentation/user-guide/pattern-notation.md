@@ -1,226 +1,121 @@
-# Pattern Notation Guide
+# Pattern Notation
 
-This document defines the visual pattern notation for Groove CLI.
+Groove CLI patterns are **strings** where each symbol represents one step. Track timing is controlled by `div` (**tokens per beat**) and the song `bpm`.
 
-**Status key:**
-- ✅ Implemented and working
-- 🔜 Parsed but not yet applied in audio
-- 💭 Under consideration
+## Entering patterns (TUI / REPL)
+
+The easiest form is track-first:
+
+```text
+kick x...x...x...x...
+```
+
+For patterns that include **spaces** or more complex **group syntax**, use `pattern … "…"`:
+
+```text
+pattern kick "x... x... x... x..."
+```
 
 ## Basics
 
-Patterns are strings where each character represents one step. The sequencer plays at `track.div` steps per beat (default 4 = 16th notes) at `song.bpm` tempo.
+- **Hit**: `x` (also `1` and `*` are accepted as hits)
+- **Accent**: `X` (louder hit)
+- **Rest**: `.`
+- **Bar separator**: `|` (ignored, visual only)
+- **Comment**: `# ...` to end of line (ignored)
 
-| Symbol | Description | Status |
-|--------|-------------|--------|
-| `x` | Hit | ✅ |
-| `X` | Accented hit (louder) | ✅ |
-| `.` | Rest/silence | ✅ |
-| `_` | Tie/sustain (extends previous note) | ✅ |
-| `\|` | Bar separator (visual only) | ✅ |
-| `#` | Comment to end of line | ✅ |
+Examples:
 
-**Examples:**
-```
-x... x... x... x...     # Four-on-the-floor kick
-..x. ..x. ..x. ..x.     # Backbeat snare
-x.x. x.x. x.x. x.x.     # 8th note hi-hat
+```text
+x... x... x... x...      # four on the floor
+....x.......x...         # backbeat
+x.x.x.x.x.x.x.x.          # 8ths
 ```
 
-## Per-Step Modifiers
+## Ties (sustain)
 
-Attach modifiers directly after a hit. Order doesn't matter.
+`_` ties a hit into following steps (no retrigger). Ties matter most in **gate** playback mode.
 
-### Pitch Transpose ✅
-```
-x+7    # Up 7 semitones
-x-5    # Down 5 semitones
-x+12   # Up one octave
+```text
+x___.   # one hit, sustained across 3 ties
 ```
 
-### Velocity ✅
-```
-xv80   # Velocity 80 (0-127)
-xv127  # Maximum velocity
-X      # Accent (preset loud velocity)
+## Per-step modifiers (implemented)
+
+Modifiers are written immediately after a hit (order doesn’t matter).
+
+### Pitch (semitones)
+
+```text
+x+7   x-5   x+12
 ```
 
-### Probability ✅
-```
-x?50%   # 50% chance to trigger
-x?0.25  # 25% chance (decimal form)
-x?75%   # 75% chance
+### Velocity (0–127)
+
+```text
+xv64
+xv127
+X        # accent (uses an “accent velocity” when no explicit vN is present)
+Xv50     # explicit velocity wins over accent
 ```
 
-### Ratchets (Sub-Repeats) ✅
-```
-x{2}    # 2 rapid hits within the step
-x{3}    # Triplet roll
-x{4}    # 4 quick hits (32nd notes at div=4)
+### Probability
+
+```text
+x?50%     # percent form
+x?0.25    # 0..1 form
 ```
 
-### Gate Length ✅
-```
-x=1/2   # Hold for 50% of step duration
-x=3/4   # Hold for 75%
-x=1/4   # Short staccato
+### Ratchets (sub-hits)
+
+`{N}` subdivides a single step into **N** evenly-spaced triggers.
+
+```text
+x{3}      # triplet-style roll in one step
+x{4}
 ```
 
-### Micro-timing Nudge 🔜
-```
-x@+5ms   # Trigger 5ms late
-x@-10ms  # Trigger 10ms early
-x@+5%    # Nudge by 5% of step duration
+### Gate length
+
+Gate shortens (or lengthens) the first step’s hold time in **gate** mode.
+
+```text
+x=1/2
+x=3/4
+x=0.25
 ```
 
-### Cycle Conditions 🔜
-```
-x@1/4   # Only trigger on cycle 1 of every 4
-x@3/4   # Only on cycle 3 of 4
+Ties still extend the total hold:
+
+```text
+x=1/2__   # half-step first, then ties extend additional full steps
 ```
 
-### Per-Step Parameter Locks 🔜
-```
-x[delay.on]              # Enable delay for this hit only
-x[delay.time=1/8]        # Override delay time
-x[delay.mix=0.5]         # Override delay mix
+## Chords / polyphony
+
+### Chord offsets (recommended for interactive input)
+
+```text
+x+(0,4,7)         # major triad
+x+(0,3,7)         # minor triad
 ```
 
-### Combined Modifiers
-```
-x+7?50%v80{2}   # Up 7 semitones, 50% probability, velocity 80, double hit
-X=3/4           # Accented with 75% gate
+### Inline chord group
+
+```text
+(x x+4 x+7)
 ```
 
-## Chords ✅
+## Groups and repeats
 
-Multiple notes on the same step:
+Groups can be repeated with `*N`:
 
-### Inline chord notation
-```
-(x x+4 x+7)     # Major chord (root, major 3rd, 5th)
-(x x+3 x+7)     # Minor chord
-(x x+4 x+7 x+12) # Major with octave
+```text
+(x.)*4     # expands to x.x.x.x.
 ```
 
-### Shorthand chord offsets
-```
-x+(0,4,7)       # Same as (x x+4 x+7)
-x+(0,3,7)       # Minor chord
-```
+## Known limitations
 
-Each note in a chord can have its own velocity:
-```
-(xv100 x+4v80 x+7v60)   # Root loudest, decreasing up
-```
+The parser recognizes some additional modifiers (nudges, cycle conditions, param locks), but **playback currently ignores them**. If you see syntax like `@-5ms`, `@1/4`, or `[delay.time=…]`, it will parse but won’t affect audio yet.
 
-## Groups and Repeats ✅
 
-### Repeat groups
-```
-(x.)*4          # Expands to: x.x.x.x.
-(x..)*3         # Expands to: x..x..x..
-(x x+4)*2       # Expands to: x x+4 x x+4
-```
-
-## Ties and Sustain ✅
-
-Use `_` to extend a note through following steps (no retrigger):
-```
-x___....        # Hit on step 1, sustain through steps 2-4
-x_x_x_x_        # Alternating hits with sustain
-```
-
-In `gate` playback mode, ties determine how long the sample plays before being cut.
-
-## Comments ✅
-
-In multi-line patterns (YAML files), use `#` for comments:
-```yaml
-pattern: !Visual |
-  x... x... x... x...  # kick pattern
-  # this line is ignored
-```
-
-## Whitespace
-
-Spaces and tabs are ignored—use them freely for visual grouping:
-```
-x . . . | x . . . | x . . . | x . . .
-```
-
-## Full Grammar (EBNF)
-
-```
-pattern     := (step | group | bar | comment | ws)*
-bar         := '|'
-comment     := '#' [^\n]* '\n'
-group       := '(' (step | group)+ ')' repeat?
-repeat      := '*' INT
-step        := rest | hit modifiers*
-rest        := '.' | '_'
-hit         := 'x' | 'X' | '*' | '1'
-modifiers   := pitch | prob | vel | ratchet | nudge | gate | chord | plock | cycle
-pitch       := ('+' | '-') INT
-prob        := '?' (FLOAT | INT '%')
-vel         := 'v' INT                    # 0-127
-ratchet     := '{' INT '}'
-nudge       := '@' ('+' | '-')? (INT 'ms' | INT '%')
-gate        := '=' (FRACTION | FLOAT)
-chord       := '+(' INT (',' INT)* ')'
-plock       := '[' kv (',' kv)* ']'
-kv          := KEY ('=' VALUE)?
-cycle       := '@' INT '/' INT
-```
-
-## Examples
-
-### Basic drum pattern
-```
-x... x... x... x...     # Kick
-.... x... .... x...     # Snare
-x.x. x.x. x.x. x.x.     # Hi-hat
-```
-
-### Hi-hat with dynamics
-```
-xv60 X xv40 xv60 X xv40 xv60 X
-```
-
-### Generative hi-hat
-```
-x x?30% x x?50% x x?30% x x?50%
-```
-
-### Snare with ratchet fill
-```
-.... x... .... x{4}.
-```
-
-### Synth arpeggio
-```
-x x+4 x+7 x+12 x+7 x+4
-```
-
-### Chord progression
-```
-(x x+4 x+7)___ (x+5 x+9 x+12)___ (x+7 x+11 x+14)___
-```
-
-### Delay on accents only
-```
-xv80 xv110[delay.on] xv80 xv110[delay.on]
-```
-
-## Tips
-
-- Keep patterns under 80 characters for readability
-- Use `|` and spaces to show bar structure
-- Set `div` per track rather than changing pattern length
-- Use probability for generative variation
-- Combine ratchets and velocity for expressive rolls
-
-## See Also
-
-- [Command Reference](commands.md) — All REPL commands
-- [Quickstart](quickstart.md) — Tutorial introduction

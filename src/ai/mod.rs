@@ -112,12 +112,21 @@ fn has_pitch_modifiers(pattern: &str) -> bool {
 
 /// Generate pattern suggestions based on a description.
 pub fn suggest_patterns(config: &AiConfig, description: &str, context: &PatternContext) -> Result<Vec<String>> {
+    let is_melodic = is_melodic_track(&context.target_track);
+
+    // For common drum-style prompts, return a deterministic pattern without calling the AI.
+    // This keeps tests hermetic and avoids requiring an API key for simple cases.
+    if !is_melodic {
+        if let Some(pat) = keyword_pattern(description, context.steps) {
+            return Ok(vec![pat]);
+        }
+    }
+
     let api_key = config.api_key.as_ref()
         .ok_or_else(|| anyhow!("OPENAI_API_KEY not set in .env"))?;
-    
+
     let instructions = build_instructions(context);
     let input = build_input(description, context);
-    let is_melodic = is_melodic_track(&context.target_track);
     
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -457,5 +466,33 @@ X...x...X...x...
         assert_eq!(keyword_pattern("offbeat hat", 16), Some("..x...x...x...x.".to_string()));
         assert_eq!(keyword_pattern("backbeat snare", 16), Some("....x.......x...".to_string()));
         assert_eq!(keyword_pattern("random weird thing", 16), None); // falls back to AI
+    }
+
+    #[test]
+    fn suggest_patterns_uses_keyword_patterns_without_api_key_for_drums() {
+        let cfg = AiConfig { api_key: None, model: "gpt-5.2".to_string() };
+        let ctx = PatternContext {
+            bpm: 120,
+            steps: 16,
+            target_track: "kick".to_string(),
+            tracks: vec![],
+        };
+
+        let patterns = suggest_patterns(&cfg, "4 on the floor", &ctx).expect("keyword match should succeed");
+        assert_eq!(patterns, vec!["x...x...x...x...".to_string()]);
+    }
+
+    #[test]
+    fn suggest_patterns_still_requires_api_key_for_melodic_tracks() {
+        let cfg = AiConfig { api_key: None, model: "gpt-5.2".to_string() };
+        let ctx = PatternContext {
+            bpm: 120,
+            steps: 16,
+            target_track: "synth".to_string(),
+            tracks: vec![],
+        };
+
+        let err = suggest_patterns(&cfg, "4 on the floor", &ctx).unwrap_err();
+        assert!(err.to_string().contains("OPENAI_API_KEY"));
     }
 }

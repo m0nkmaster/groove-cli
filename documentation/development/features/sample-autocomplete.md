@@ -1,86 +1,48 @@
-# REPL Sample Autocomplete
+# Sample Completion (Implemented)
 
-This document specifies the behavior, UX, and implementation details for autocompleting sample paths when choosing a sample for a track in the REPL.
+This document describes how sample completion works today in both the classic REPL and the TUI.
 
-## Goals
+## Source of truth
 
-- Provide fast, accurate autocompletion of sample paths rooted at the `samples/` folder.
-- Make picking samples fluid while live-coding; suggestions appear as you type.
-- Minimize latency and avoid blocking the audio/transport thread.
+- REPL helper + completer: `src/repl/completer.rs`
+- Sample resolution + suggestions (for errors): `src/repl/mod.rs` (`resolve_sample_path`, `find_similar_samples`)
 
-## Scope
+## Supported audio extensions
 
-- Autocomplete for the `sample <track_idx> "path"` command argument.
-- Default root is the workspace `samples/` folder, but support absolute and relative paths.
-- File types: `wav`, `aiff`, `aif`, `flac`, `mp3`, `ogg`, `m4a` (configurable).
+Completion scans `samples/` recursively and includes:
 
-## UX Requirements
+- `wav`, `mp3`, `ogg`, `flac`, `aiff`, `aif`
 
-- Trigger: When the cursor is inside the quoted path after `sample <idx>`, pressing Tab shows suggestions.
-- Display: A dropdown list with up to 20 candidates (scrollable if supported by the line editor), ordered by:
-  1. Prefix match > substring match
-  2. Direct children before deeper descendants
-  3. Alphabetical tie-breaker (case-insensitive)
-- Directories: show with trailing `/` and allow drilling down.
-- Relative base:
-  - No prefix or starts with `samples/` → search under `samples/`.
-  - Starts with `./` or `../` → resolve relative to current working directory.
-  - Absolute path (`/` or drive prefix on Windows) → complete from that root.
-- Hidden files and directories (dot-prefixed) are excluded by default.
-- Case-insensitive matching on macOS/Windows; case-sensitive on Linux.
-- If there is a single unambiguous completion, Tab completes inline; otherwise, it prints the common prefix and shows the list.
+## Primary UX: `track ~ …`
 
-## Performance Requirements
+The recommended user-facing form is:
 
-- Directory scanning must not block the audio thread. All FS work occurs on the main/REPL thread.
-- Cache directory listings in-memory with a TTL (default 2 seconds) to reduce FS churn while typing.
-- Keep the cache small (LRU by directory path, max 256 entries) to keep memory bounded.
+```text
+kick ~ 909/kick<Tab>
+```
 
-## Edge Cases
+Behavior:
 
-- Large sample libraries: Suggestion rendering truncates to 20 visible items with paging.
-- Missing `samples/` folder: Show a hint “Create samples/ to enable library completion.” Still allow absolute/relative path completion.
-- Symlinks: Resolve symlinks for display but return the user-typed path.
-- Spaces in paths: always surround with quotes; completion inserts escaped quotes if needed inside the string.
-- Non-audio files: filtered out unless the extension whitelist is disabled via config.
+- Completion is **context-aware** when a `~` is present in the input line.
+- Matching is **simple fuzzy** (primarily filename/path substring/prefix matching, not edit-distance).
+- Suggestions are displayed as a shortened `dir/file` form, but insertion uses the full path.
 
-## Configuration
+## Secondary UX: `sample …` / `preview …`
 
-- `repl.autocomplete.sample_root` (string, default: `"samples"`)
-- `repl.autocomplete.max_results` (int, default: 20)
-- `repl.autocomplete.extensions` (array, default: audio set above)
-- `repl.autocomplete.cache_ttl_ms` (int, default: 2000)
+Completion also supports the index-based commands:
 
-Configuration source order: CLI flag > env var > project config file > defaults.
+```text
+sample 1 "samples/…"<Tab>
+preview "samples/…"<Tab>
+```
 
-## REPL Grammar Impact
+Quoted and unquoted paths are supported, but quoting is recommended for paths with spaces.
 
-- The `sample` command retains its syntax: `sample <idx> "path"`.
-- Completion is context-aware: only the last token (inside quotes) is considered for path completion.
+## TUI vs REPL differences
 
-## Implementation Sketch (Rust)
+- **REPL** (`--repl`): uses a cached `GrooveHelper` instance, so completion is fast after startup.
+- **TUI** (default): calls `complete_for_tui`, which constructs a helper on demand.
 
-- Integrate with `rustyline` via a custom `Completer` that inspects the current line buffer.
-- Detect the `sample` command and identify the quoted path span.
-- Resolve a base directory from the partially typed path.
-- Query a cache (keyed by directory path) for directory entries; refresh on miss/TTL expiry.
-- Filter by prefix/substring; sort by rules above; format candidates with `/` for directories.
-- Return `rustyline::CompletionType::List` with replacements anchored to the span.
+If completion ever becomes slow for large libraries, the first place to optimize is avoiding repeated full-directory scans in the TUI completion path.
 
-Threading: all completion logic runs on the REPL thread; audio engine is independent.
-
-## Testing Strategy
-
-- Unit tests for the path resolver (base dir, typed prefix → candidate list).
-- Unit tests for filtering (prefix vs substring) and sorting.
-- Tests for extension filtering, hidden file exclusion, case sensitivity per platform.
-- Cache behavior tests (expiry, LRU eviction).
-- Snapshot tests for completion list formatting (golden outputs).
-
-## Future Enhancements
-
-- Preview small waveform or duration metadata in suggestion list (optional).
-- Fuzzy matching (e.g., `fzf`-style scoring) for large libraries.
-- Configurable sample roots (multiple folders).
-- Async filesystem watcher to push updates into the cache.
 

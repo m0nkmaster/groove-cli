@@ -1,52 +1,53 @@
-# REPL Command Reference
+# Command Parsing & Surfaces (Developer Notes)
 
-This reference describes the current and planned REPL commands, syntax, semantics, and live-update behavior while audio is running.
+This document describes how commands are parsed/executed today, and where to add new ones.
 
-## Principles
+## One command engine, two frontends
 
-- Minimal, legible commands with immediate feedback.
-- Safe, hot-swappable changes to the live object graph (song/tracks) while transport runs.
+- **TUI**: `src/tui/` reads keystrokes and submits the current line to `repl::handle_line_for_tui`.
+- **REPL** (`--repl`): `src/repl/` reads lines via `rustyline` and calls the same `handle_line`.
 
-## Command Grammar (current)
+All behavior described below lives in `src/repl/mod.rs`.
 
-- Core commands:
-  - `bpm <n>` — set global tempo (`u32`)
-  - `steps <n>` — set steps per bar (model only; audio pending)
-  - `swing <percent>` — 0..100 (model only; audio pending)
-  - `track "Name"` — create a new track appended to the list
-  - `sample <track_idx> "path"` — set track sample
-  - `pattern <track_idx> "visual"` — set visual pattern on track
-  - `div <track_idx> <tokens_per_beat>` — per‑track timing division (4 → 16th notes)
-  - `gain <track_idx> <db>` — adjust level in decibels
-  - `mute <track_idx> [on|off]` — toggle or set
-  - `solo <track_idx> [on|off]` — toggle or set (solo overrides mute)
-  - `remove <track_idx>` — delete a track
-  - `list` — print track summaries and FX states
-- Transport: `play` / `stop`
-- Persistence: `save "song.yaml"` / `open "song.yaml"`
-- Meta/UI: `:help`, `:q`, `:doc`, `:live [on|off]`, `clear`
+## Parsing pipeline (in order)
 
-## Visual Patterns
+1. **Meta commands**
+   - Lines starting with `:` are handled by `handle_meta` (e.g. `:help`, `:q`).
+   - `?` is a help shortcut (prints `help_box()`).
 
-- Syntax examples: `"x... x... x... x..."`, `"x+3"`, `"x@96"`, `"x!!!"`, `"x%35"`.
-- Spacing groups steps visually (e.g., 4×4 grid).
-- For broader terminal UI examples and scenario mockups, see `documentation/features/cli-ui-gallery.md`.
+2. **Dot-chaining syntax**
+   - `parse_chained_commands` recognizes expressions like:
+     - `track("Kick").sample(1, "samples/...").pattern(1, "x...")`
+   - It rewrites them into a sequence of index-based commands (`track …`, `sample …`, `pattern …`) and executes them in order.
 
-## Live Update Behavior
+3. **New-style “quick” commands**
+   - A bare number sets BPM (e.g. `140`).
+   - `+ name` adds a track.
+   - `- name` removes a track.
 
-- All commands mutate the in-memory song. The scheduler consumes deltas safely:
-  - Tempo changes (`bpm`) apply progressively without stopping playback.
-  - `pattern` changes take effect smoothly; playhead advances on the new pattern.
-  - `mute`/`solo`/`gain` apply immediately; solo state mutes all non‑solo tracks.
-  - Delay parameters (on/time/fb/mix) update the model; audio effect application is pending.
+4. **Track-first syntax**
+   - If the first token matches an existing track name, `try_track_first_command` handles:
+     - patterns: `kick x...`
+     - sample selection: `kick ~ query or path`
+     - variation set/switch: `kick.fill …`, `kick > fill`
+     - per-track actions: `kick mute`, `kick unmute`, `kick solo`, `kick delay …`, `kick gen …`, `kick ai …`, `kick -3db`
 
-## Planned Additions
+5. **Index-based commands**
+   - Remaining lines are tokenized with `shlex` and executed via a `match` on the first token.
+   - Many commands accept a “track id” argument that can be either a 1-based index or a track name (see `parse_track_index`).
 
-- `repeat on|off` at the song level
-- `meter [idx]` with simple peak/RMS
-- `quantise <idx> <grid>`
+## Adding a new command
 
-## Autocomplete
+- Add a new match arm in the index-based `match cmd.as_str()` block in `src/repl/mod.rs`.
+- If it should be available as a track-first command, extend `try_track_first_command`.
+- If it should be completable, update:
+  - `src/repl/completer.rs` (`COMMANDS`, `TRACK_COMMANDS`, and/or TUI completions)
+  - help text in `src/repl/style.rs` (`help_box`)
 
-- Methods and file paths are autocompleted.
-- Sample path autocomplete is detailed in `sample-autocomplete.md`.
+## TUI considerations
+
+The TUI is a full-screen redraw UI. Avoid printing to stdout from command handlers (it will corrupt the screen).
+
+If a feature needs to emit async output (logs, reload notices, etc.), route it through `crate::console` so the TUI can display it safely.
+
+

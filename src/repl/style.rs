@@ -11,7 +11,6 @@ pub const EMOJI_SOLO: &str = "🎤";
 pub const EMOJI_GAIN: &str = "🎚";
 pub const EMOJI_DELAY: &str = "🔁";
 pub const EMOJI_DICE: &str = "🎲";
-pub const EMOJI_SPARKLE: &str = "✨";
 pub const EMOJI_SAVE: &str = "💾";
 pub const EMOJI_OPEN: &str = "📂";
 pub const EMOJI_CHECK: &str = "✓";
