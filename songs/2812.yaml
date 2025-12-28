@@ -5,6 +5,11 @@ repeat: true
 tracks:
 - name: kick
   sample: samples/80s Drum Machines/Linn LinnDrum/ALL/Kick SD_80s_LinnDrum.wav
+  sample_root:
+    freq_hz: 2004.5454
+    midi_note: 95
+    cents: 25.239563
+    confidence: 0.97867215
   delay:
     on: false
     time: 1/4
@@ -18,6 +23,11 @@ tracks:
   div: 4
 - name: snare
   sample: samples/80s Drum Machines/Linn Linn9000/Snare/Snare 2 SD_80s_Linn9000.wav
+  sample_root:
+    freq_hz: 121.15385
+    midi_note: 47
+    cents: -32.795715
+    confidence: 0.8049058
   delay:
     on: false
     time: 1/4
@@ -31,6 +41,11 @@ tracks:
   div: 4
 - name: hat
   sample: samples/80s Drum Machines/Linn Linn9000/Hi Hat/Hi Hat Open 1 SD_80s_Linn9000.wav
+  sample_root:
+    freq_hz: 700.0
+    midi_note: 77
+    cents: 3.8215637
+    confidence: 0.21625426
   delay:
     on: false
     time: 1/4
@@ -44,6 +59,11 @@ tracks:
   div: 4
 - name: hhc
   sample: samples/80s Drum Machines/Linn LinnDrum/ALL/Hi Hat Closed Low SD_80s_LinnDrum.wav
+  sample_root:
+    freq_hz: 336.64124
+    midi_note: 64
+    cents: 36.450195
+    confidence: 0.21205485
   delay:
     on: false
     time: 1/4
@@ -57,6 +77,11 @@ tracks:
   div: 4
 - name: synth
   sample: samples/synth/C4_2.wav
+  sample_root:
+    freq_hz: 130.47337
+    midi_note: 48
+    cents: -4.497528
+    confidence: 0.9869822
   delay:
     on: false
     time: 1/4
@@ -70,19 +95,29 @@ tracks:
   div: 4
 - name: synthlead
   sample: samples/synth/C4_2.wav
+  sample_root:
+    freq_hz: 130.47337
+    midi_note: 48
+    cents: -4.497528
+    confidence: 0.9869822
   delay:
     on: false
     time: 1/4
     feedback: 0.35
     mix: 0.25
   pattern: !Visual x+24x+26x+27x+29x+31x+29x+27x+26x+24x+26x+27x+31x+29x+27x+26x+24
-  mute: true
+  mute: false
   solo: false
   playback: gate
   gain_db: 0.0
   div: 4
 - name: arp
   sample: samples/synth/Midnight Arp Pluck.wav
+  sample_root:
+    freq_hz: 219.40298
+    midi_note: 57
+    cents: -4.7042847
+    confidence: 0.98164433
   delay:
     on: false
     time: 1/4
@@ -91,6 +126,27 @@ tracks:
   pattern: !Visual x_______________
   variations:
     fill: !Visual x+0.x+0.x+7.x+7.x+10.x+10.x+12.x+12.
+  mute: false
+  solo: false
+  playback: gate
+  gain_db: 0.0
+  div: 4
+- name: piano
+  sample: samples/synth/Traditional Family Piano.wav
+  sample_root:
+    freq_hz: 436.63367
+    midi_note: 69
+    cents: -13.296509
+    confidence: 0.9969742
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual (a c# e) (a c# e) (a c# e) (a c# e) (c e g) (c e g) (c e g) (c e g) (f# a c#) (f# a c#) (f# a c#) (f# a c#) (d f# a) (d f# a) (d f# a) (d f# a)
+  variations:
+    alt: !Visual a___ d___ e___ d___
+  current_variation: alt
   mute: false
   solo: false
   playback: gate
