@@ -17,9 +17,3 @@ The ability to change sequences at the end of a loop instead of instantly. Proba
 
 ## UI sparkles
 
-* `>` = play
-* `<` = step back so all tracks are on beat 1
-* ai gen shows a thinking icon
-* "Macros" i.e. create a one word action e.g. `chorus` which runs a longer chain of commands, something like `synth > chorus;kick > fill;lead mute; bass > chorus`
-* Visually showing all variations in the TUI e.g. a column showing `MAIN | FILL | BRIDGE | OUTRO` for a track. The currently selected track is highlighted
-* Wildcard track selection to allow big transitions, e.g. `* > chorus` or `*piano* bridge` 
