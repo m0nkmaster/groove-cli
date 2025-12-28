@@ -34,3 +34,4 @@ The playhead position is highlighted using ANSI color escape codes.
 The default TUI already renders a continuously-updating tracker grid. `:live` is not designed for the TUI and can corrupt the full-screen display if invoked there.
 
 
+

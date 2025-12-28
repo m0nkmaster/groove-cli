@@ -46,3 +46,4 @@ Quoted and unquoted paths are supported, but quoting is recommended for paths wi
 If completion ever becomes slow for large libraries, the first place to optimize is avoiding repeated full-directory scans in the TUI completion path.
 
 
+

@@ -26,3 +26,4 @@ The TUI is rendered by `src/tui/mod.rs` and is split into four vertical sections
 The TUI is a full-screen redraw interface. Command handlers should avoid printing to stdout; route asynchronous logs through `crate::console` so they show up in the messages pane.
 
 
+

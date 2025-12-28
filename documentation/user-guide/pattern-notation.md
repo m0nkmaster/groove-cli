@@ -119,3 +119,4 @@ Groups can be repeated with `*N`:
 The parser recognizes some additional modifiers (nudges, cycle conditions, param locks), but **playback currently ignores them**. If you see syntax like `@-5ms`, `@1/4`, or `[delay.time=…]`, it will parse but won’t affect audio yet.
 
 
+

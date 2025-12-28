@@ -20,3 +20,4 @@ This is a lightweight list of ideas that are not yet implemented. Keep it honest
 - **Richer sample browsing in TUI**: optional in-app browser/picker (without leaving full-screen mode)
 
 
+

@@ -51,3 +51,4 @@ The TUI is a full-screen redraw UI. Avoid printing to stdout from command handle
 If a feature needs to emit async output (logs, reload notices, etc.), route it through `crate::console` so the TUI can display it safely.
 
 
+

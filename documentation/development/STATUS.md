@@ -61,3 +61,4 @@ This is a “source-of-truth” snapshot of what `groove-cli` currently ships, p
 - Add TUI-safe equivalents for REPL-only features (`:live`, `clear`, interactive browse) or hide/disable them in the TUI command layer.
 
 
+

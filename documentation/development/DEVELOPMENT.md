@@ -91,3 +91,4 @@ cargo test
 This repo follows strict TDD (Red → Green → Refactor). Keep changes small, write the failing test first, and prefer pure helpers (parser/compile/timing) over integration-heavy tests.
 
 
+
