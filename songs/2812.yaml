@@ -1,0 +1,98 @@
+bpm: 120
+steps: 16
+swing: 0
+repeat: true
+tracks:
+- name: kick
+  sample: samples/80s Drum Machines/Linn LinnDrum/ALL/Kick SD_80s_LinnDrum.wav
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual x...x...x...x...
+  mute: false
+  solo: false
+  playback: gate
+  gain_db: 0.0
+  div: 4
+- name: snare
+  sample: samples/80s Drum Machines/Linn Linn9000/Snare/Snare 2 SD_80s_Linn9000.wav
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual '....x...'
+  mute: false
+  solo: false
+  playback: gate
+  gain_db: 0.0
+  div: 4
+- name: hat
+  sample: samples/80s Drum Machines/Linn Linn9000/Hi Hat/Hi Hat Open 1 SD_80s_Linn9000.wav
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual '...............x'
+  mute: false
+  solo: false
+  playback: gate
+  gain_db: 0.0
+  div: 4
+- name: hhc
+  sample: samples/80s Drum Machines/Linn LinnDrum/ALL/Hi Hat Closed Low SD_80s_LinnDrum.wav
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual x
+  mute: false
+  solo: false
+  playback: gate
+  gain_db: 0.0
+  div: 4
+- name: synth
+  sample: samples/synth/C4_2.wav
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual x+0...x+7..x+12.x+7..x+5..x+10.|x+0...x+5..x+10.x+12..x+7..
+  mute: false
+  solo: false
+  playback: gate
+  gain_db: 0.0
+  div: 4
+- name: synthlead
+  sample: samples/synth/C4_2.wav
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual x+24x+26x+27x+29x+31x+29x+27x+26x+24x+26x+27x+31x+29x+27x+26x+24
+  mute: true
+  solo: false
+  playback: gate
+  gain_db: 0.0
+  div: 4
+- name: arp
+  sample: samples/synth/Midnight Arp Pluck.wav
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual x_______________
+  variations:
+    fill: !Visual x+0.x+0.x+7.x+7.x+10.x+10.x+12.x+12.
+  mute: false
+  solo: false
+  playback: gate
+  gain_db: 0.0
+  div: 4
