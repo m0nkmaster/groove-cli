@@ -36,12 +36,20 @@ struct Message {
     level: Level,
 }
 
+struct CompletionCycle {
+    prefix: String,
+    suffix: String,
+    candidates: Vec<crate::repl::completer::Completion>,
+    idx: usize,
+}
+
 pub struct TuiApp {
     song: Song,
     input: InputLine,
     messages: Vec<Message>,
     console: console::Subscription,
     should_quit: bool,
+    completion_cycle: Option<CompletionCycle>,
 }
 
 impl TuiApp {
@@ -52,6 +60,7 @@ impl TuiApp {
             messages: Vec::new(),
             console: console::subscribe(),
             should_quit: false,
+            completion_cycle: None,
         }
     }
 
@@ -100,6 +109,11 @@ impl TuiApp {
                 }
                 _ => {}
             }
+        }
+
+        // Any non-Tab key cancels the current completion cycle.
+        if !matches!(code, KeyCode::Tab) {
+            self.completion_cycle = None;
         }
 
         match code {
@@ -151,6 +165,21 @@ impl TuiApp {
     fn tab_complete(&mut self) {
         use crate::repl::completer::complete_for_tui;
         
+        // If we already have a completion cycle, advance it without recomputing.
+        if let Some(mut state) = self.completion_cycle.take() {
+            if state.candidates.is_empty() {
+                return;
+            }
+            state.idx = (state.idx + 1) % state.candidates.len();
+            let c = &state.candidates[state.idx];
+            let new_line = format!("{}{}{}", state.prefix, c.replacement, state.suffix);
+            let msg = format!("▶ {} ({}/{})", c.display, state.idx + 1, state.candidates.len());
+            self.input.set(&new_line);
+            self.msg(&msg, Level::Info);
+            self.completion_cycle = Some(state);
+            return;
+        }
+
         let line = self.input.value();
         let pos = self.input.cursor();
         let comps = complete_for_tui(line, pos);
@@ -161,25 +190,31 @@ impl TuiApp {
         
         if comps.len() == 1 {
             let c = &comps[0];
-            let new = format!("{}{}", &line[..c.start], c.replacement);
+            let new = format!("{}{}{}", &line[..c.start], c.replacement, &line[pos..]);
             self.input.set(&new);
         } else {
-            // Common prefix
-            let first = &comps[0].replacement;
-            let prefix_len = comps.iter()
-                .skip(1)
-                .map(|c| first.chars().zip(c.replacement.chars()).take_while(|(a,b)| a == b).count())
-                .min()
-                .unwrap_or(first.len());
-            
-            if prefix_len > (pos.saturating_sub(comps[0].start)) {
-                let new = format!("{}{}", &line[..comps[0].start], &first[..prefix_len]);
-                self.input.set(&new);
-            }
-            
-            let display: Vec<&str> = comps.iter().take(5).map(|c| c.display.as_str()).collect();
-            let more = if comps.len() > 5 { format!(" (+{})", comps.len() - 5) } else { String::new() };
-            self.msg(&format!("{}{}", display.join("  "), more), Level::Info);
+            // Start a completion cycle:
+            // - replace the span [start..pos] with each candidate's replacement
+            // - Tab cycles through candidates
+            let start = comps[0].start;
+            let prefix = line[..start].to_string();
+            let suffix = line[pos..].to_string();
+            let first_display = comps[0].display.clone();
+            let first_replacement = comps[0].replacement.clone();
+
+            let new_line = format!("{}{}{}", prefix, first_replacement, suffix);
+            self.input.set(&new_line);
+            self.msg(
+                &format!("▶ {} (1/{})  Tab to cycle", first_display, comps.len()),
+                Level::Info,
+            );
+
+            self.completion_cycle = Some(CompletionCycle {
+                prefix,
+                suffix,
+                candidates: comps,
+                idx: 0,
+            });
         }
     }
 

@@ -39,9 +39,7 @@ All commands below work in both modes unless noted.
 ### 1) Add tracks
 
 ```text
-+ kick
-+ snare
-+ hat
++ kick snare hat
 ```
 
 Track names are **single words** (no spaces). You can use `- name` to remove them later.
@@ -57,7 +55,15 @@ hat ~ hat
 ```
 
 - **Tab completion**: in the TUI, press **Tab** after `~` to see matches; in the REPL, Tab completion is provided by `rustyline`.
-- **Paths with spaces**: `track ~ …` accepts paths with spaces without extra quoting.
+- **In the TUI**: when there are multiple matches, pressing **Tab cycles** through them and inserts the current selection into the command line.
+- **Multi-word fuzzy search**: `kick ~ linn snare class<Tab>` matches space-separated tokens (any order).
+- **Paths with spaces**: `track ~ …` accepts spaces; if you want to keep chaining more actions after the sample, use `~[ ... ]` or quotes.
+
+Example chaining (pattern + sample + gain in one line):
+
+```text
+kick x... ~[harsh 909 kick] -3db
+```
 
 ### 3) Enter patterns
 

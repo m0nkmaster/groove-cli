@@ -200,13 +200,14 @@ pub fn help_box() -> String {
 {v}    120           set tempo                         {v}
 {v}                                                    {v}
 {v}  TRACKS                                            {v}
-{v}    + name        add track                         {v}
+{v}    + a b c       add track(s)                      {v}
 {v}    - name        remove track                      {v}
 {v}    list, ls      show all                          {v}
 {v}                                                    {v}
 {v}  TRACK COMMANDS                                    {v}
 {v}    kick x...     set pattern                       {v}
 {v}    kick ~ path   set sample                        {v}
+{v}    kick x... ~q -3db  chain actions                {v}
 {v}    kick -3db     gain                              {v}
 {v}    kick mute     mute (unmute to undo)             {v}
 {v}    kick solo     toggle solo                       {v}

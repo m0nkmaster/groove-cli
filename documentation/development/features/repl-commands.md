@@ -11,28 +11,33 @@ All behavior described below lives in `src/repl/mod.rs`.
 
 ## Parsing pipeline (in order)
 
-1. **Meta commands**
+1. **Semicolon-separated commands**
+   - If the line contains `;` (outside quotes/brackets/parentheses), it is split into multiple commands and executed left-to-right.
+   - Execution stops at the first error (no rollback of already-applied earlier commands).
+
+2. **Meta commands**
    - Lines starting with `:` are handled by `handle_meta` (e.g. `:help`, `:q`).
    - `?` is a help shortcut (prints `help_box()`).
 
-2. **Dot-chaining syntax**
+3. **Dot-chaining syntax**
    - `parse_chained_commands` recognizes expressions like:
      - `track("Kick").sample(1, "samples/...").pattern(1, "x...")`
    - It rewrites them into a sequence of index-based commands (`track …`, `sample …`, `pattern …`) and executes them in order.
 
-3. **New-style “quick” commands**
+4. **New-style “quick” commands**
    - A bare number sets BPM (e.g. `140`).
-   - `+ name` adds a track.
+   - `+ name [name...]` adds tracks (atomic).
    - `- name` removes a track.
 
-4. **Track-first syntax**
-   - If the first token matches an existing track name, `try_track_first_command` handles:
+5. **Track-first syntax**
+   - If the first token matches an existing track name, `try_track_first_command` parses **one or more segments** (left-to-right) and applies them **atomically per line** (commit + `audio::reload_song` once).
      - patterns: `kick x...`
-     - sample selection: `kick ~ query or path`
+     - sample selection: `kick ~ query...`, `kick ~[multi word query]`, `kick ~ "multi word query"`
      - variation set/switch: `kick.fill …`, `kick > fill`
      - per-track actions: `kick mute`, `kick unmute`, `kick solo`, `kick delay …`, `kick gen …`, `kick ai …`, `kick -3db`
+     - chaining example: `kick x... ~[linn snare class] -3db`
 
-5. **Index-based commands**
+6. **Index-based commands**
    - Remaining lines are tokenized with `shlex` and executed via a `match` on the first token.
    - Many commands accept a “track id” argument that can be either a 1-based index or a track name (see `parse_track_index`).
 

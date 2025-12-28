@@ -31,67 +31,83 @@ impl GrooveHelper {
     /// Fuzzy match samples against a query, returning scored results.
     /// If query is empty, returns all samples.
     fn fuzzy_match_samples(&self, query: &str) -> Vec<(i32, String)> {
+        let raw = query.trim();
         // Empty query: return all samples
-        if query.is_empty() {
-            return self.sample_cache
+        if raw.is_empty() {
+            return self
+                .sample_cache
                 .iter()
                 .map(|p| (50, p.clone()))
                 .collect();
         }
-        
-        let query_lower = query.to_lowercase();
-        let query_parts: Vec<&str> = query_lower.split('/').collect();
-        
-        let mut scored: Vec<(i32, String)> = self.sample_cache
+
+        // Support bracketed query text (e.g. "~[linn snare class]").
+        let raw = raw.trim_start_matches('[').trim_end_matches(']');
+        let tokens = tokenize_query_tokens(raw);
+        if tokens.is_empty() {
+            return self
+                .sample_cache
+                .iter()
+                .map(|p| (50, p.clone()))
+                .collect();
+        }
+
+        let mut scored: Vec<(i32, String)> = self
+            .sample_cache
             .iter()
-            .filter_map(|path| {
-                let path_lower = path.to_lowercase();
-                let filename = Path::new(path)
-                    .file_stem()
-                    .and_then(|f| f.to_str())
-                    .unwrap_or("")
-                    .to_lowercase();
-                
-                // Score based on match quality - only good matches
-                let score = if filename == query_lower {
-                    100 // Exact filename match
-                } else if filename.starts_with(&query_lower) {
-                    80 // Filename starts with query
-                } else if filename.contains(&query_lower) {
-                    60 // Filename contains query
-                } else if path_lower.contains(&query_lower) {
-                    40 // Path contains query
-                } else if query_parts.len() > 1 {
-                    // Multi-part query like "909/kick" - check if all parts match in order
-                    let mut search_pos = 0;
-                    let mut all_match = true;
-                    for part in &query_parts {
-                        if let Some(pos) = path_lower[search_pos..].find(part) {
-                            search_pos += pos + part.len();
-                        } else {
-                            all_match = false;
-                            break;
-                        }
-                    }
-                    if all_match { 50 } else { 0 }
-                } else {
-                    // No fuzzy single-char matching - too noisy
-                    // Only match if query is a substring
-                    0
-                };
-                
-                if score > 0 {
-                    Some((score, path.clone()))
-                } else {
-                    None
-                }
-            })
+            .filter_map(|path| score_candidate(&tokens, raw, path).map(|s| (s, path.clone())))
             .collect();
-        
-        // Sort by score descending
-        scored.sort_by(|a, b| b.0.cmp(&a.0));
+
+        // Sort by score descending, then shorter path, then lexicographically.
+        scored.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| a.1.len().cmp(&b.1.len()))
+                .then_with(|| a.1.cmp(&b.1))
+        });
         scored
     }
+}
+
+fn tokenize_query_tokens(query: &str) -> Vec<String> {
+    query
+        .split(|c: char| c.is_whitespace() || c == '/' || c == '\\')
+        .filter_map(|t| {
+            let t = t.trim().to_lowercase();
+            if t.is_empty() { None } else { Some(t) }
+        })
+        .collect()
+}
+
+fn score_candidate(tokens: &[String], raw_query: &str, path: &str) -> Option<i32> {
+    let path_lower = path.to_lowercase();
+    let filename = Path::new(path)
+        .file_stem()
+        .and_then(|f| f.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    // Any-order AND: every token must appear in the path.
+    if !tokens.iter().all(|t| path_lower.contains(t)) {
+        return None;
+    }
+
+    // Basic scoring:
+    // - tokens in filename are more important than tokens only in directories
+    // - exact single-token filename match should win
+    let mut score: i32 = 0;
+    if tokens.len() == 1 && filename == tokens[0] {
+        score += 100;
+    }
+    for t in tokens {
+        score += if filename.contains(t) { 30 } else { 10 };
+    }
+
+    let raw_lower = raw_query.to_lowercase();
+    if !raw_lower.is_empty() && path_lower.contains(&raw_lower) {
+        score += 15;
+    }
+
+    Some(score.max(1))
 }
 
 /// Scan the samples directory recursively and return all sample paths.
@@ -288,12 +304,22 @@ impl Completer for GrooveHelper {
 
 /// Shorten a sample path for display (show kit/sample instead of full path)
 fn shorten_sample_path(path: &str) -> String {
-    let parts: Vec<&str> = path.split('/').collect();
-    if parts.len() >= 2 {
-        // Show last two parts: "kit/Sample.wav"
-        parts[parts.len()-2..].join("/")
-    } else {
-        path.to_string()
+    let p = Path::new(path);
+    let file = p.file_name().and_then(|s| s.to_str()).unwrap_or(path);
+    let parent = p
+        .parent()
+        .and_then(|pp| pp.file_name())
+        .and_then(|s| s.to_str());
+    let grandparent = p
+        .parent()
+        .and_then(|pp| pp.parent())
+        .and_then(|pp| pp.file_name())
+        .and_then(|s| s.to_str());
+
+    match (grandparent, parent) {
+        (Some(gp), Some(par)) => format!("{file} ({gp}/{par})"),
+        (None, Some(par)) => format!("{file} ({par})"),
+        _ => file.to_string(),
     }
 }
 
@@ -625,10 +651,52 @@ mod tests {
     }
 
     #[test]
+    fn fuzzy_match_space_tokens_any_order() {
+        let helper = GrooveHelper {
+            sample_cache: vec![
+                "samples/80s Drum Machines/Linn LinnDrum/Snare/Snare Classic.wav".to_string(),
+                "samples/80s Drum Machines/Roland TR-808/BD/BD.wav".to_string(),
+            ],
+        };
+
+        // Any-order token matching: all tokens must appear somewhere in the path/filename.
+        let matches = helper.fuzzy_match_samples("linn snare class");
+        assert!(
+            matches.iter().any(|(_, p)| p.to_lowercase().contains("snare classic")),
+            "expected query tokens to match 'Snare Classic' sample; got: {matches:?}"
+        );
+    }
+
+    #[test]
+    fn complete_after_tilde_bracket_query_returns_samples() {
+        let helper = GrooveHelper {
+            sample_cache: vec![
+                "samples/80s Drum Machines/Linn LinnDrum/Snare/Snare Classic.wav".to_string(),
+            ],
+        };
+
+        let line = "kick ~[linn snare class]";
+        let pos_in = line.len();
+        let (pos_out, matches) = helper
+            .complete(
+                line,
+                pos_in,
+                &rustyline::Context::new(&rustyline::history::DefaultHistory::new()),
+            )
+            .expect("complete should succeed");
+
+        // Replacement starts immediately after '~'
+        assert_eq!(pos_out, 6);
+        assert!(!matches.is_empty());
+        assert!(matches[0].replacement.starts_with(" "));
+        assert!(matches[0].replacement.contains("Snare Classic.wav"));
+    }
+
+    #[test]
     fn shorten_sample_path_works() {
         assert_eq!(
             shorten_sample_path("samples/kits/harsh 909/Kick.wav"),
-            "harsh 909/Kick.wav"
+            "Kick.wav (kits/harsh 909)"
         );
         assert_eq!(shorten_sample_path("Kick.wav"), "Kick.wav");
     }

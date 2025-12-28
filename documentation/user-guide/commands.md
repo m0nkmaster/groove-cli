@@ -25,6 +25,7 @@ kick mute
 kick delay 1/8 0.4 0.3
 kick.fill x.x.x.x.x.x.x.x.
 kick > fill
+kick x... ~[linn snare class] -3db
 ```
 
 ### 2) Index-based (explicit)
@@ -49,6 +50,16 @@ track("Kick").sample(1, "samples/kits/harsh 909/Kick.wav").pattern(1, "x...x...x
 
 This expands into the index-based commands: `track …`, `sample …`, `pattern …` (in order).
 
+### Multiple commands per line (`;`)
+
+You can run multiple commands on one line by separating them with `;`:
+
+```text
++ kick snare; kick x...; snare ....x.......x...; go
+```
+
+Commands run **left-to-right** and stop at the **first error** (earlier changes are kept).
+
 ---
 
 ## Global / transport
@@ -64,7 +75,7 @@ This expands into the index-based commands: `track …`, `sample …`, `pattern 
 ## Track management
 
 - **Add track**:
-  - `+ name`
+  - `+ name [name...]` (atomic)
   - `track name`
 - **Remove track**:
   - `- name` or `- 1`
@@ -160,6 +171,21 @@ sample kick 909/kick
 ```
 
 Tab completion works best with the track-first form: `kick ~ <Tab>`.
+
+Multi-word fuzzy search is supported:
+
+```text
+kick ~ linn snare class
+```
+
+If you want to keep chaining more actions after the sample, use brackets or quotes:
+
+```text
+kick ~[linn snare class] -3db
+kick ~ "linn snare class" -3db
+```
+
+In the **TUI**, when multiple matches exist, pressing **Tab cycles** through matches and inserts the current selection into the command line.
 
 ### List/search samples
 

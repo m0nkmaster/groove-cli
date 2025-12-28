@@ -24,8 +24,24 @@ kick ~ 909/kick<Tab>
 Behavior:
 
 - Completion is **context-aware** when a `~` is present in the input line.
-- Matching is **simple fuzzy** (primarily filename/path substring/prefix matching, not edit-distance).
+- Matching is **token-based**: the query is split on whitespace and `/`, and a candidate must contain **all tokens** (any order).
 - Suggestions are displayed as a shortened `dir/file` form, but insertion uses the full path.
+
+Multi-word queries work without quoting:
+
+```text
+kick ~ linn snare class<Tab>
+```
+
+Bracketed queries are also supported (useful when you want to keep chaining more segments after the sample):
+
+```text
+kick ~[linn snare class]<Tab>
+```
+
+## TUI cycling
+
+In the TUI, when multiple matches exist, Tab **cycles** through candidates and inserts the currently selected one into the command line.
 
 ## Secondary UX: `sample …` / `preview …`
 

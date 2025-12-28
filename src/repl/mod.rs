@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex as StdMutex;
 use std::thread;
@@ -91,6 +92,25 @@ fn handle_line(song: &mut Song, line: &str) -> Result<Output> {
 
 fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Result<Output> {
     let l = line.trim();
+
+    // Semicolon-separated commands (run left-to-right; stop on first error).
+    // This is handled before meta commands so `:live on; go` works as expected.
+    if allow_chain {
+        if let Some(commands) = parse_semicolon_commands(l) {
+            let mut texts = Vec::new();
+            for cmd in commands {
+                match handle_line_internal(song, &cmd, true)? {
+                    Output::None => {}
+                    Output::Text(t) => texts.push(t),
+                }
+            }
+            return Ok(if texts.is_empty() {
+                Output::None
+            } else {
+                Output::Text(texts.join("\n"))
+            });
+        }
+    }
     
     // Meta commands
     if let Some(rest) = l.strip_prefix(':') {
@@ -130,21 +150,39 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
         }
     }
     
-    // + trackname = add track
-    if let Some(name) = l.strip_prefix('+').map(|s| s.trim()) {
-        if !name.is_empty() && !name.contains(' ') {
-            // Check for duplicate
+    // + name [name...] = add track(s)
+    if let Some(rest) = l.strip_prefix('+').map(|s| s.trim()) {
+        if rest.is_empty() {
+            bail!("usage: + name [name...]");
+        }
+
+        let names: Vec<&str> = rest.split_whitespace().collect();
+        if names.is_empty() {
+            bail!("usage: + name [name...]");
+        }
+
+        // Validate atomically before mutating the song.
+        let mut seen: HashSet<String> = HashSet::new();
+        for name in &names {
             let name_lower = name.to_lowercase();
-            if song.tracks.iter().any(|t| t.name.to_lowercase() == name_lower) {
+            if !seen.insert(name_lower.clone()) {
                 bail!("  {} track \"{}\" already exists", EMOJI_THINK, name);
             }
-            song.tracks.push(Track::new(name));
-            crate::audio::reload_song(song);
-            update_track_names(song);
-            return Ok(Output::Text(success(&format!("added {}", name))));
-        } else if name.contains(' ') {
-            bail!("  {} track names must be single words (no spaces)", EMOJI_THINK);
+            if song
+                .tracks
+                .iter()
+                .any(|t| t.name.to_lowercase() == name_lower)
+            {
+                bail!("  {} track \"{}\" already exists", EMOJI_THINK, name);
+            }
         }
+
+        for name in &names {
+            song.tracks.push(Track::new(*name));
+        }
+        crate::audio::reload_song(song);
+        update_track_names(song);
+        return Ok(Output::Text(success(&format!("added {}", names.join(" ")))));
     }
     
     // - trackname = remove track
@@ -412,7 +450,10 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
             
             // Validate sample exists
             let path = std::path::Path::new(&resolved);
-            if !path.exists() {
+            if !path.is_file() {
+                if path.exists() {
+                    return Err(anyhow::anyhow!("sample must be a file: {}", resolved));
+                }
                 // Try to find similar samples
                 let suggestions = find_similar_samples(&p);
                 return Err(anyhow::anyhow!("{}", not_found_sample(&p, &suggestions)));
@@ -444,7 +485,10 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
                 .ok_or_else(|| anyhow::anyhow!("usage: preview \"path\""))?;
             let resolved = resolve_sample_path(&p);
             let path = std::path::Path::new(&resolved);
-            if !path.exists() {
+            if !path.is_file() {
+                if path.exists() {
+                    return Err(anyhow::anyhow!("sample must be a file: {}", resolved));
+                }
                 return Err(anyhow::anyhow!("sample not found: {}", resolved));
             }
             crate::audio::preview_sample(&resolved)?;
@@ -457,6 +501,9 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
                 Ok(BrowserResult::Selected(path)) => {
                     // If a track index follows, set the sample
                     if let Some(idx) = parts.next() {
+                        if !std::path::Path::new(&path).is_file() {
+                            return Err(anyhow::anyhow!("sample must be a file: {}", path));
+                        }
                         let (i, track) = track_mut(song, &idx)?;
                         track.sample = Some(path.clone());
                         crate::audio::reload_song(song);
@@ -775,6 +822,57 @@ fn parse_chained_commands(input: &str) -> Option<Vec<String>> {
     }
 }
 
+fn parse_semicolon_commands(input: &str) -> Option<Vec<String>> {
+    let mut commands: Vec<String> = Vec::new();
+    let mut start = 0usize;
+    let mut in_quotes = false;
+    let mut escape = false;
+    let mut bracket_depth: u32 = 0;
+    let mut paren_depth: u32 = 0;
+
+    for (idx, ch) in input.char_indices() {
+        if in_quotes {
+            if escape {
+                escape = false;
+                continue;
+            }
+            match ch {
+                '\\' => escape = true,
+                '"' => in_quotes = false,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_quotes = true,
+            '[' => bracket_depth = bracket_depth.saturating_add(1),
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            '(' => paren_depth = paren_depth.saturating_add(1),
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            ';' if bracket_depth == 0 && paren_depth == 0 => {
+                let part = input[start..idx].trim();
+                if !part.is_empty() {
+                    commands.push(part.to_string());
+                }
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+
+    let tail = input[start..].trim();
+    if !tail.is_empty() {
+        commands.push(tail.to_string());
+    }
+
+    if commands.len() >= 2 {
+        Some(commands)
+    } else {
+        None
+    }
+}
+
 fn skip_whitespace(_input: &str, chars: &[(usize, char)], pos: &mut usize) {
     while *pos < chars.len() && chars[*pos].1.is_whitespace() {
         *pos += 1;
@@ -951,227 +1049,378 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
     if !track_names.contains(&track_name.to_lowercase()) {
         return Ok(None); // Not a track-first command
     }
-    
-    let second = parts.next();
-    
-    match second.as_deref() {
-        // Pattern: kick x...x...
-        Some(pat) if looks_like_pattern(pat) => {
-            let (_, track) = track_mut(song, &track_name)?;
-            let name = track.name.clone();
-            if let Some(var_name) = variation {
-                track.variations.insert(var_name.clone(), Pattern::visual(pat));
-                crate::audio::reload_song(song);
-                Ok(Some(Output::Text(track_pattern(&format!("{}.{}", name, var_name), pat))))
-            } else {
-                track.pattern = Some(Pattern::visual(pat));
-                crate::audio::reload_song(song);
-                Ok(Some(Output::Text(track_pattern(&name, pat))))
-            }
-        }
-        // Sample: kick ~ 909/kick or kick ~ samples/kits/harsh 909/High Tom.wav
-        Some("~") => {
-            // Collect all remaining parts as the sample path (handles spaces in path)
-            let sample_parts: Vec<String> = parts.collect();
-            if sample_parts.is_empty() {
-                return Err(anyhow!("usage: trackname ~ samplepath"));
-            }
-            let sample_query = sample_parts.join(" ");
-            let resolved = resolve_sample_path(&sample_query);
-            let path = std::path::Path::new(&resolved);
-            if !path.exists() {
-                let suggestions = find_similar_samples(&sample_query);
-                return Err(anyhow!("{}", not_found_sample(&sample_query, &suggestions)));
-            }
-            let (_, track) = track_mut(song, &track_name)?;
-            let name = track.name.clone();
-            track.sample = Some(resolved.clone());
-            crate::audio::reload_song(song);
-            Ok(Some(Output::Text(track_sample(&name, &resolved))))
-        }
-        // Sample with ~ attached: kick ~909/kick or kick ~samples/kits/harsh 909/...
-        Some(s) if s.starts_with('~') => {
-            // Strip the ~ and collect remaining parts
-            let first_part = &s[1..]; // Remove leading ~
-            let sample_parts: Vec<String> = std::iter::once(first_part.to_string())
-                .chain(parts)
-                .collect();
-            let sample_query = sample_parts.join(" ");
-            let resolved = resolve_sample_path(&sample_query);
-            let path = std::path::Path::new(&resolved);
-            if !path.exists() {
-                let suggestions = find_similar_samples(&sample_query);
-                return Err(anyhow!("{}", not_found_sample(&sample_query, &suggestions)));
-            }
-            let (_, track) = track_mut(song, &track_name)?;
-            let name = track.name.clone();
-            track.sample = Some(resolved.clone());
-            crate::audio::reload_song(song);
-            Ok(Some(Output::Text(track_sample(&name, &resolved))))
-        }
-        // Mute: kick mute
-        Some("mute") => {
-            let (_, track) = track_mut(song, &track_name)?;
-            let name = track.name.clone();
-            track.mute = true;
-            crate::audio::reload_song(song);
-            Ok(Some(Output::Text(track_muted(&name))))
-        }
-        // Unmute: kick unmute
-        Some("unmute") => {
-            let (_, track) = track_mut(song, &track_name)?;
-            let name = track.name.clone();
-            track.mute = false;
-            crate::audio::reload_song(song);
-            Ok(Some(Output::Text(track_unmuted(&name))))
-        }
-        // Solo: kick solo
-        Some("solo") => {
-            let (_, track) = track_mut(song, &track_name)?;
-            let name = track.name.clone();
-            track.solo = !track.solo;
-            let is_solo = track.solo;
-            crate::audio::reload_song(song);
-            Ok(Some(Output::Text(track_solo(&name, is_solo))))
-        }
-        // Variation switch: kick > fill
-        Some(">") => {
-            let var_name = parts.next().ok_or_else(|| anyhow!("usage: trackname > variation"))?;
-            let (_, track) = track_mut(song, &track_name)?;
-            let name = track.name.clone();
-            if var_name == "main" || var_name == "-" {
-                track.current_variation = None;
-                crate::audio::reload_song(song);
-                Ok(Some(Output::Text(track_variation(&name, "main"))))
-            } else if track.variations.contains_key(&var_name) {
-                track.current_variation = Some(var_name.clone());
-                crate::audio::reload_song(song);
-                Ok(Some(Output::Text(track_variation(&name, &var_name))))
-            } else {
-                Err(anyhow!("variation '{}' not found", var_name))
-            }
-        }
-        // Delay: kick delay on/off or kick delay 1/8 0.4 0.3
-        Some("delay") => {
-            let action = parts.next().ok_or_else(|| anyhow!("usage: trackname delay on|off"))?;
-            let (_, track) = track_mut(song, &track_name)?;
-            let name = track.name.clone();
-            match action.as_str() {
-                "on" => {
-                    track.delay.on = true;
-                    crate::audio::reload_song(song);
-                    Ok(Some(Output::Text(track_delay(&name, true, None, None, None))))
-                }
-                "off" => {
-                    track.delay.on = false;
-                    crate::audio::reload_song(song);
-                    Ok(Some(Output::Text(track_delay(&name, false, None, None, None))))
-                }
-                time_val => {
-                    track.delay.on = true;
-                    track.delay.time = time_val.to_string();
-                    if let Some(fb) = parts.next() {
-                        track.delay.feedback = parse_unit_range("feedback", &fb)?;
-                    }
-                    if let Some(mix) = parts.next() {
-                        track.delay.mix = parse_unit_range("mix", &mix)?;
-                    }
-                    let t = track.delay.time.clone();
-                    let fb = track.delay.feedback;
-                    let mix = track.delay.mix;
-                    crate::audio::reload_song(song);
-                    Ok(Some(Output::Text(track_delay(&name, true, Some(&t), Some(fb), Some(mix)))))
-                }
-            }
-        }
-        // Gen: kick gen euclid(5,16)
-        Some("gen") => {
-            let script = parts.next().ok_or_else(|| anyhow!("usage: trackname gen euclid(5,16)"))?;
-            let script = script.trim_matches(|c| c == '`' || c == '"');
-            let engine = PatternEngine::new();
-            match engine.eval(script) {
-                Ok(pattern) => {
-                    let (_, track) = track_mut(song, &track_name)?;
-                    let name = track.name.clone();
-                    track.pattern = Some(Pattern::visual(&pattern));
-                    crate::audio::reload_song(song);
-                    Ok(Some(Output::Text(track_generated(&name, &pattern))))
-                }
-                Err(e) => Err(anyhow!("script error: {}", e)),
-            }
-        }
-        // AI: kick ai "funky"
-        Some("ai") => {
-            let description: String = std::iter::once(parts.next().unwrap_or_default())
-                .chain(parts.map(|s| s.to_string()))
-                .collect::<Vec<_>>()
-                .join(" ")
-                .trim_matches('"')
-                .to_string();
-            
-            let config = AiConfig::default();
-            let context = PatternContext {
-                bpm: song.bpm,
-                steps: 16,
-                target_track: track_name.clone(),
-                tracks: song.tracks.iter().map(|t| TrackInfo {
-                    name: t.name.clone(),
-                    sample: t.sample.clone(),
-                    pattern: t.active_pattern().map(|p| match p {
-                        Pattern::Visual(s) => s.clone(),
-                    }),
-                    variations: t.variations.keys().cloned().collect(),
-                    current_variation: t.current_variation.clone(),
-                    muted: t.mute,
-                    solo: t.solo,
-                    gain_db: t.gain_db,
-                    delay: if t.delay.on {
-                        Some(DelayInfo {
-                            on: t.delay.on,
-                            time: t.delay.time.clone(),
-                            feedback: t.delay.feedback,
-                            mix: t.delay.mix,
-                        })
-                    } else {
-                        None
-                    },
-                }).collect(),
-            };
-            
-            // Note: No println here - it corrupts TUI display
-            match suggest_patterns(&config, &description, &context) {
-                Ok(patterns) => {
-                    if let Some(pattern) = patterns.first() {
-                        let (_, track) = track_mut(song, &track_name)?;
-                        let name = track.name.clone();
-                        if let Some(var_name) = variation {
-                            track.variations.insert(var_name.clone(), Pattern::visual(pattern));
-                            crate::audio::reload_song(song);
-                            Ok(Some(Output::Text(track_pattern(&format!("{}.{}", name, var_name), pattern))))
-                        } else {
-                            track.pattern = Some(Pattern::visual(pattern));
-                            crate::audio::reload_song(song);
-                            Ok(Some(Output::Text(track_pattern(&name, pattern))))
-                        }
-                    } else {
-                        Err(anyhow!("AI returned no valid patterns"))
-                    }
-                }
-                Err(e) => Err(anyhow!("AI generation failed: {}", e)),
-            }
-        }
-        // Gain: kick -3db or kick +2db
-        Some(val) if looks_like_gain(val) => {
-            let db = parse_gain_value(val)?;
-            let (_, track) = track_mut(song, &track_name)?;
-            let name = track.name.clone();
-            track.gain_db = db;
-            crate::audio::reload_song(song);
-            Ok(Some(Output::Text(track_gain(&name, db))))
-        }
-        // Not a track-first command we recognize
-        _ => Ok(None),
+
+    let tokens: Vec<String> = parts.collect();
+    if tokens.is_empty() {
+        return Ok(None);
     }
+
+    // Atomic per line: apply to a clone, then commit + reload once.
+    let mut draft = song.clone();
+    let mut out_lines: Vec<String> = Vec::new();
+
+    let is_boundary = |t: &str| {
+        matches!(t, "mute" | "unmute" | "solo" | "delay" | "gen" | "ai" | ">")
+            || looks_like_gain(t)
+            || looks_like_pattern(t)
+    };
+
+    let mut i = 0usize;
+    while i < tokens.len() {
+        let tok = tokens[i].as_str();
+
+        // Pattern: kick x...x...
+        if looks_like_pattern(tok) {
+            let pat = tok;
+            let msg = {
+                let (_, track) = track_mut(&mut draft, &track_name)?;
+                let name = track.name.clone();
+                if let Some(ref var_name) = variation {
+                    track.variations.insert(var_name.clone(), Pattern::visual(pat));
+                    track_pattern(&format!("{}.{}", name, var_name), pat)
+                } else {
+                    track.pattern = Some(Pattern::visual(pat));
+                    track_pattern(&name, pat)
+                }
+            };
+            out_lines.push(msg);
+            i += 1;
+            continue;
+        }
+
+        // Gain: kick -3db or kick +2db
+        if looks_like_gain(tok) {
+            let db = parse_gain_value(tok)?;
+            let msg = {
+                let (_, track) = track_mut(&mut draft, &track_name)?;
+                let name = track.name.clone();
+                track.gain_db = db;
+                track_gain(&name, db)
+            };
+            out_lines.push(msg);
+            i += 1;
+            continue;
+        }
+
+        match tok {
+            // Sample: kick ~ query... (supports spaces) OR kick ~[query with spaces]
+            "~" => {
+                let mut j = i + 1;
+                if j >= tokens.len() {
+                    return Err(anyhow!("usage: trackname ~ sample_query"));
+                }
+
+                // Collect query tokens until we hit another segment boundary.
+                let mut query_parts: Vec<String> = Vec::new();
+                while j < tokens.len() && !is_boundary(tokens[j].as_str()) {
+                    query_parts.push(tokens[j].clone());
+                    j += 1;
+                }
+                if query_parts.is_empty() {
+                    return Err(anyhow!("usage: trackname ~ sample_query"));
+                }
+                let sample_query = query_parts.join(" ");
+                let resolved = resolve_sample_path(&sample_query);
+                let path = std::path::Path::new(&resolved);
+                if !path.is_file() {
+                    if path.exists() {
+                        return Err(anyhow!("sample must be a file: {}", resolved));
+                    }
+                    let suggestions = find_similar_samples(&sample_query);
+                    return Err(anyhow!("{}", not_found_sample(&sample_query, &suggestions)));
+                }
+                let msg = {
+                    let (_, track) = track_mut(&mut draft, &track_name)?;
+                    let name = track.name.clone();
+                    track.sample = Some(resolved.clone());
+                    track_sample(&name, &resolved)
+                };
+                out_lines.push(msg);
+                i = j;
+            }
+            // Sample with ~ attached: kick ~909/kick OR kick ~[linn snare class]
+            s if s.starts_with("~[") => {
+                // Parse a bracketed query which may span multiple tokens: ~[a b c]
+                let mut j = i;
+                let mut raw_parts: Vec<String> = Vec::new();
+                while j < tokens.len() {
+                    raw_parts.push(tokens[j].clone());
+                    if tokens[j].ends_with(']') {
+                        break;
+                    }
+                    j += 1;
+                }
+                if raw_parts.is_empty() {
+                    return Err(anyhow!("usage: trackname ~[sample query]"));
+                }
+                let raw = raw_parts.join(" ");
+                let sample_query = raw
+                    .trim_start_matches("~[")
+                    .trim_end_matches(']')
+                    .to_string();
+                if sample_query.trim().is_empty() {
+                    return Err(anyhow!("usage: trackname ~[sample query]"));
+                }
+
+                let resolved = resolve_sample_path(&sample_query);
+                let path = std::path::Path::new(&resolved);
+                if !path.is_file() {
+                    if path.exists() {
+                        return Err(anyhow!("sample must be a file: {}", resolved));
+                    }
+                    let suggestions = find_similar_samples(&sample_query);
+                    return Err(anyhow!("{}", not_found_sample(&sample_query, &suggestions)));
+                }
+                let msg = {
+                    let (_, track) = track_mut(&mut draft, &track_name)?;
+                    let name = track.name.clone();
+                    track.sample = Some(resolved.clone());
+                    track_sample(&name, &resolved)
+                };
+                out_lines.push(msg);
+                i = j + 1;
+            }
+            s if s.starts_with('~') => {
+                // Strip leading ~ and then collect any following tokens until a boundary.
+                let first_part = s.trim_start_matches('~');
+                let mut j = i + 1;
+                let mut query_parts: Vec<String> = vec![first_part.to_string()];
+                while j < tokens.len() && !is_boundary(tokens[j].as_str()) {
+                    query_parts.push(tokens[j].clone());
+                    j += 1;
+                }
+                let sample_query = query_parts.join(" ").trim().to_string();
+                if sample_query.is_empty() {
+                    return Err(anyhow!("usage: trackname ~ sample_query"));
+                }
+                let resolved = resolve_sample_path(&sample_query);
+                let path = std::path::Path::new(&resolved);
+                if !path.is_file() {
+                    if path.exists() {
+                        return Err(anyhow!("sample must be a file: {}", resolved));
+                    }
+                    let suggestions = find_similar_samples(&sample_query);
+                    return Err(anyhow!("{}", not_found_sample(&sample_query, &suggestions)));
+                }
+                let msg = {
+                    let (_, track) = track_mut(&mut draft, &track_name)?;
+                    let name = track.name.clone();
+                    track.sample = Some(resolved.clone());
+                    track_sample(&name, &resolved)
+                };
+                out_lines.push(msg);
+                i = j;
+            }
+            "mute" => {
+                let msg = {
+                    let (_, track) = track_mut(&mut draft, &track_name)?;
+                    let name = track.name.clone();
+                    track.mute = true;
+                    track_muted(&name)
+                };
+                out_lines.push(msg);
+                i += 1;
+            }
+            "unmute" => {
+                let msg = {
+                    let (_, track) = track_mut(&mut draft, &track_name)?;
+                    let name = track.name.clone();
+                    track.mute = false;
+                    track_unmuted(&name)
+                };
+                out_lines.push(msg);
+                i += 1;
+            }
+            "solo" => {
+                let msg = {
+                    let (_, track) = track_mut(&mut draft, &track_name)?;
+                    let name = track.name.clone();
+                    track.solo = !track.solo;
+                    let is_solo = track.solo;
+                    track_solo(&name, is_solo)
+                };
+                out_lines.push(msg);
+                i += 1;
+            }
+            ">" => {
+                let var_name = tokens
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow!("usage: trackname > variation"))?
+                    .to_string();
+                let msg = {
+                    let (_, track) = track_mut(&mut draft, &track_name)?;
+                    let name = track.name.clone();
+                    if var_name == "main" || var_name == "-" {
+                        track.current_variation = None;
+                        track_variation(&name, "main")
+                    } else if track.variations.contains_key(&var_name) {
+                        track.current_variation = Some(var_name.clone());
+                        track_variation(&name, &var_name)
+                    } else {
+                        return Err(anyhow!("variation '{}' not found", var_name));
+                    }
+                };
+                out_lines.push(msg);
+                i += 2;
+            }
+            "delay" => {
+                let action = tokens
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow!("usage: trackname delay on|off|<time> [fb] [mix]"))?
+                    .to_string();
+                let msg = match action.as_str() {
+                    "on" => {
+                        let (_, track) = track_mut(&mut draft, &track_name)?;
+                        let name = track.name.clone();
+                        track.delay.on = true;
+                        track_delay(&name, true, None, None, None)
+                    }
+                    "off" => {
+                        let (_, track) = track_mut(&mut draft, &track_name)?;
+                        let name = track.name.clone();
+                        track.delay.on = false;
+                        track_delay(&name, false, None, None, None)
+                    }
+                    time_val => {
+                        // Optional numeric fb/mix args, stopping at the next boundary.
+                        let mut j = i + 2;
+                        let mut fb: Option<f32> = None;
+                        let mut mix: Option<f32> = None;
+                        if j < tokens.len() && !is_boundary(tokens[j].as_str()) {
+                            fb = Some(parse_unit_range("feedback", &tokens[j])?);
+                            j += 1;
+                        }
+                        if j < tokens.len() && !is_boundary(tokens[j].as_str()) {
+                            mix = Some(parse_unit_range("mix", &tokens[j])?);
+                            j += 1;
+                        }
+
+                        let msg = {
+                            let (_, track) = track_mut(&mut draft, &track_name)?;
+                            let name = track.name.clone();
+                            track.delay.on = true;
+                            track.delay.time = time_val.to_string();
+                            if let Some(fb) = fb { track.delay.feedback = fb; }
+                            if let Some(mix) = mix { track.delay.mix = mix; }
+                            let t = track.delay.time.clone();
+                            let fb = track.delay.feedback;
+                            let mix = track.delay.mix;
+                            track_delay(&name, true, Some(&t), Some(fb), Some(mix))
+                        };
+
+                        // We consumed: delay + time + (fb?) + (mix?)
+                        i = j;
+                        out_lines.push(msg);
+                        continue;
+                    }
+                };
+                out_lines.push(msg);
+                i += 2;
+            }
+            "gen" => {
+                let script = tokens
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow!("usage: trackname gen euclid(5,16)"))?
+                    .to_string();
+                let script = script.trim_matches(|c| c == '`' || c == '"');
+                let engine = PatternEngine::new();
+                let pattern = engine.eval(script).map_err(|e| anyhow!("script error: {}", e))?;
+
+                let msg = {
+                    let (_, track) = track_mut(&mut draft, &track_name)?;
+                    let name = track.name.clone();
+                    if let Some(ref var_name) = variation {
+                        track.variations.insert(var_name.clone(), Pattern::visual(&pattern));
+                    } else {
+                        track.pattern = Some(Pattern::visual(&pattern));
+                    }
+                    track_generated(&name, &pattern)
+                };
+                out_lines.push(msg);
+                i += 2;
+            }
+            "ai" => {
+                // Consume the rest of the line as the description.
+                let description: String = tokens
+                    .iter()
+                    .skip(i + 1)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .trim_matches('"')
+                    .to_string();
+                if description.trim().is_empty() {
+                    return Err(anyhow!("usage: trackname ai \"description\""));
+                }
+
+                let config = AiConfig::default();
+                let context = PatternContext {
+                    bpm: draft.bpm,
+                    steps: 16,
+                    target_track: track_name.clone(),
+                    tracks: draft
+                        .tracks
+                        .iter()
+                        .map(|t| TrackInfo {
+                            name: t.name.clone(),
+                            sample: t.sample.clone(),
+                            pattern: t.active_pattern().map(|p| match p {
+                                Pattern::Visual(s) => s.clone(),
+                            }),
+                            variations: t.variations.keys().cloned().collect(),
+                            current_variation: t.current_variation.clone(),
+                            muted: t.mute,
+                            solo: t.solo,
+                            gain_db: t.gain_db,
+                            delay: if t.delay.on {
+                                Some(DelayInfo {
+                                    on: t.delay.on,
+                                    time: t.delay.time.clone(),
+                                    feedback: t.delay.feedback,
+                                    mix: t.delay.mix,
+                                })
+                            } else {
+                                None
+                            },
+                        })
+                        .collect(),
+                };
+
+                match suggest_patterns(&config, &description, &context) {
+                    Ok(patterns) => {
+                        let Some(pattern) = patterns.first() else {
+                            return Err(anyhow!("AI returned no valid patterns"));
+                        };
+                        let msg = {
+                            let (_, track) = track_mut(&mut draft, &track_name)?;
+                            let name = track.name.clone();
+                            if let Some(ref var_name) = variation {
+                                track.variations.insert(var_name.clone(), Pattern::visual(pattern));
+                                track_pattern(&format!("{}.{}", name, var_name), pattern)
+                            } else {
+                                track.pattern = Some(Pattern::visual(pattern));
+                                track_pattern(&name, pattern)
+                            }
+                        };
+                        out_lines.push(msg);
+                        break;
+                    }
+                    Err(e) => return Err(anyhow!("AI generation failed: {}", e)),
+                }
+            }
+            other => {
+                return Err(anyhow!("unknown track command segment: {}", other));
+            }
+        }
+    }
+
+    if out_lines.is_empty() {
+        return Ok(None);
+    }
+
+    *song = draft;
+    crate::audio::reload_song(song);
+    Ok(Some(Output::Text(out_lines.join("\n"))))
 }
 
 /// Check if a string looks like a pattern (contains x, X, or . at start)
@@ -1278,94 +1527,131 @@ const RESET: &str = "\x1b[0m";
 /// - Kit shortcuts: "909/kick" -> finds matching sample
 /// - Name only: "kick" -> finds first matching sample
 fn resolve_sample_path(input: &str) -> String {
-    let input_lower = input.to_lowercase();
-    
+    let raw = input.trim();
+    if raw.is_empty() {
+        return raw.to_string();
+    }
+
     // Already a valid path
-    if std::path::Path::new(input).exists() {
-        return input.to_string();
+    if std::path::Path::new(raw).exists() {
+        return raw.to_string();
     }
-    
-    // Scan samples and find best match
+
+    // Token-based fuzzy match: all tokens must be present (any order).
+    let tokens = sample_query_tokens(raw);
+    if tokens.is_empty() {
+        return raw.to_string();
+    }
+
     let samples = scan_all_samples();
-    
-    // Try exact filename match first
-    for s in &samples {
-        let filename = std::path::Path::new(s)
-            .file_stem()
-            .and_then(|f| f.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        if filename == input_lower {
-            return s.clone();
-        }
-    }
-    
-    // Try partial path match (e.g., "909/kick" matches "samples/kits/harsh 909/Kick.wav")
-    for s in &samples {
-        let s_lower = s.to_lowercase();
-        // Check if all parts of input are present in order
-        let input_parts: Vec<&str> = input_lower.split('/').collect();
-        let mut all_match = true;
-        let mut search_start = 0;
-        for part in &input_parts {
-            if let Some(pos) = s_lower[search_start..].find(part) {
-                search_start += pos + part.len();
-            } else {
-                all_match = false;
-                break;
+    let mut best: Option<(i32, String)> = None;
+    for s in samples {
+        let Some(score) = score_sample_candidate(&tokens, raw, &s) else { continue };
+        match &best {
+            None => best = Some((score, s)),
+            Some((best_score, best_path)) => {
+                let replace = score > *best_score
+                    || (score == *best_score && s.len() < best_path.len())
+                    || (score == *best_score && s.len() == best_path.len() && s < *best_path);
+                if replace {
+                    best = Some((score, s));
+                }
             }
         }
-        if all_match {
-            return s.clone();
-        }
     }
-    
-    // Try fuzzy match on filename contains
-    for s in &samples {
-        let filename = std::path::Path::new(s)
-            .file_stem()
-            .and_then(|f| f.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        if filename.contains(&input_lower) {
-            return s.clone();
-        }
-    }
-    
-    // Return original if no match found
-    input.to_string()
+
+    best.map(|(_, s)| s).unwrap_or_else(|| raw.to_string())
 }
 
 /// Find samples similar to the given query for suggestions.
 fn find_similar_samples(query: &str) -> Vec<String> {
-    let query_lower = query.to_lowercase();
+    let raw = query.trim();
+    if raw.is_empty() {
+        return Vec::new();
+    }
+
+    let tokens = sample_query_tokens(raw);
+    if tokens.is_empty() {
+        return Vec::new();
+    }
+
     let samples = scan_all_samples();
-    
-    let mut matches: Vec<(usize, String)> = samples
+    let mut matches: Vec<(i32, String)> = samples
         .into_iter()
         .filter_map(|s| {
-            let s_lower = s.to_lowercase();
-            let filename = std::path::Path::new(&s)
-                .file_stem()
-                .and_then(|f| f.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            
-            // Score based on matching characters
-            let score = query_lower.chars()
-                .filter(|c| filename.contains(*c) || s_lower.contains(*c))
-                .count();
-            
-            if score > query_lower.len() / 2 {
-                Some((score, s))
-            } else {
-                None
-            }
+            let score = partial_similarity_score(&tokens, raw, &s);
+            if score > 0 { Some((score, s)) } else { None }
         })
         .collect();
-    
-    matches.sort_by(|a, b| b.0.cmp(&a.0));
+
+    matches.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| a.1.len().cmp(&b.1.len()))
+            .then_with(|| a.1.cmp(&b.1))
+    });
     matches.into_iter().map(|(_, s)| s).collect()
+}
+
+fn sample_query_tokens(query: &str) -> Vec<String> {
+    query
+        .split(|c: char| c.is_whitespace() || c == '/' || c == '\\')
+        .filter_map(|t| {
+            let t = t.trim().to_lowercase();
+            if t.is_empty() { None } else { Some(t) }
+        })
+        .collect()
+}
+
+fn score_sample_candidate(tokens: &[String], raw_query: &str, path: &str) -> Option<i32> {
+    let path_lower = path.to_lowercase();
+    if !tokens.iter().all(|t| path_lower.contains(t)) {
+        return None;
+    }
+    let filename = std::path::Path::new(path)
+        .file_stem()
+        .and_then(|f| f.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let mut score: i32 = 0;
+    if tokens.len() == 1 && filename == tokens[0] {
+        score += 100;
+    }
+    for t in tokens {
+        score += if filename.contains(t) { 30 } else { 10 };
+    }
+
+    let raw_lower = raw_query.to_lowercase();
+    if !raw_lower.is_empty() && path_lower.contains(&raw_lower) {
+        score += 15;
+    }
+    Some(score.max(1))
+}
+
+fn partial_similarity_score(tokens: &[String], raw_query: &str, path: &str) -> i32 {
+    let path_lower = path.to_lowercase();
+    let filename = std::path::Path::new(path)
+        .file_stem()
+        .and_then(|f| f.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let mut hits: i32 = 0;
+    let mut score: i32 = 0;
+    for t in tokens {
+        if path_lower.contains(t) {
+            hits += 1;
+            score += if filename.contains(t) { 20 } else { 5 };
+        }
+    }
+    if hits == 0 {
+        return 0;
+    }
+    let raw_lower = raw_query.to_lowercase();
+    if !raw_lower.is_empty() && path_lower.contains(&raw_lower) {
+        score += 10;
+    }
+    score + hits * 10
 }
 
 /// List available samples, optionally filtered.
@@ -1833,5 +2119,126 @@ mod tests {
             assert!(t.contains("●") || t.contains("x..."));
             assert!(t.contains("Kick") || t.contains("kick"));
         } else { panic!("expected text output"); }
+    }
+
+    #[test]
+    fn multi_add_tracks_atomic_success() {
+        let mut song = Song::default();
+        handle_line(&mut song, "+ kick snare hat").expect("multi add");
+        assert_eq!(song.tracks.len(), 3);
+        assert_eq!(song.tracks[0].name, "kick");
+        assert_eq!(song.tracks[1].name, "snare");
+        assert_eq!(song.tracks[2].name, "hat");
+    }
+
+    #[test]
+    fn multi_add_tracks_atomic_failure_adds_nothing() {
+        let mut song = Song::default();
+        song.tracks.push(Track::new("Kick"));
+
+        let res = handle_line(&mut song, "+ kick snare");
+        assert!(res.is_err(), "expected error for duplicate track name");
+        assert_eq!(song.tracks.len(), 1, "multi-add should be atomic");
+        assert_eq!(song.tracks[0].name, "Kick");
+    }
+
+    #[test]
+    fn track_first_chaining_atomic_success() {
+        let mut song = Song::default();
+        song.tracks.push(Track::new("Kick"));
+
+        handle_line(&mut song, "kick x... ~[harsh 909 kick] -3db").expect("chained track cmd");
+
+        match &song.tracks[0].pattern {
+            Some(Pattern::Visual(p)) => assert_eq!(p, "x..."),
+            other => panic!("unexpected pattern state: {:?}", other),
+        }
+        assert!(
+            song.tracks[0]
+                .sample
+                .as_deref()
+                .unwrap_or("")
+                .contains("Kick.wav"),
+            "expected sample path to resolve to Kick.wav"
+        );
+        assert_eq!(song.tracks[0].gain_db, -3.0);
+    }
+
+    #[test]
+    fn track_first_chaining_atomic_failure_rolls_back() {
+        let mut song = Song::default();
+        let mut track = Track::new("Kick");
+        track.pattern = Some(Pattern::visual("...."));
+        track.sample = Some("samples/kits/harsh 909/Kick.wav".into());
+        track.gain_db = 0.0;
+        song.tracks.push(track);
+
+        let res = handle_line(&mut song, "kick x... ~[definitely no such sample] -3db");
+        assert!(res.is_err(), "expected sample resolution to fail");
+
+        // Atomic per-line: nothing should have changed
+        match &song.tracks[0].pattern {
+            Some(Pattern::Visual(p)) => assert_eq!(p, "...."),
+            other => panic!("unexpected pattern state: {:?}", other),
+        }
+        assert_eq!(
+            song.tracks[0].sample.as_deref(),
+            Some("samples/kits/harsh 909/Kick.wav")
+        );
+        assert_eq!(song.tracks[0].gain_db, 0.0);
+    }
+
+    #[test]
+    fn semicolon_separates_multiple_commands_in_one_line() {
+        let mut song = Song::default();
+        handle_line(&mut song, "+ kick snare; kick x...; snare ....x.......x...").expect("semicolon chain");
+        assert_eq!(song.tracks.len(), 2);
+        assert_eq!(song.tracks[0].name, "kick");
+        assert_eq!(song.tracks[1].name, "snare");
+        match &song.tracks[0].pattern {
+            Some(Pattern::Visual(p)) => assert_eq!(p, "x..."),
+            other => panic!("unexpected pattern state: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn semicolon_chain_stops_on_first_error() {
+        let mut song = Song::default();
+        let res = handle_line(&mut song, "+ kick; definitely_not_a_command; + snare");
+        assert!(res.is_err(), "expected unknown command error");
+        // First command should have applied; later commands should not.
+        assert_eq!(song.tracks.len(), 1);
+        assert_eq!(song.tracks[0].name, "kick");
+    }
+
+    #[test]
+    fn semicolon_does_not_split_inside_quotes() {
+        let mut song = Song::default();
+        handle_line(&mut song, "track(\"Kick\"); pattern 1 \"x...;x...\"").expect("semicolon + quoted pattern");
+        assert_eq!(song.tracks.len(), 1);
+        match &song.tracks[0].pattern {
+            Some(Pattern::Visual(p)) => assert_eq!(p, "x...;x..."),
+            other => panic!("unexpected pattern state: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn sample_command_rejects_directory_path() {
+        let mut song = Song::default();
+        song.tracks.push(Track::new("Kick"));
+
+        let res = handle_line(&mut song, "sample 1 documentation");
+        assert!(res.is_err(), "directories must not be accepted as samples");
+        assert!(song.tracks[0].sample.is_none(), "track sample must remain unchanged");
+    }
+
+    #[test]
+    fn track_first_sample_rejects_directory_path() {
+        let mut song = Song::default();
+        song.tracks.push(Track::new("Kick"));
+
+        let res = handle_line(&mut song, "kick ~ documentation");
+        assert!(res.is_err(), "directories must not be accepted as samples");
+        assert!(song.tracks[0].sample.is_none(), "track sample must remain unchanged");
     }
 }
