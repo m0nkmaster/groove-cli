@@ -645,73 +645,116 @@ fn merge_runtime_preserving_phase(
         }
     }
 
-    // Construct new runtime preserving phase when possible
-    let mut out: Vec<TrackRuntime> = Vec::with_capacity(new_cfg.tracks.len());
+    // Pass 1: preserve phase for existing tracks; also pick the master (longest loop in beats).
+    struct MasterCandidate {
+        name: String,
+        pattern_len: usize,
+        div: u32,
+        token_index: usize,
+        next_time: Instant,
+        beats_num: u64,
+        beats_den: u64,
+    }
+
+    let mut preserved: HashMap<String, TrackRuntime> = HashMap::new();
+    let mut master: Option<MasterCandidate> = None;
+
     for t in &new_cfg.tracks {
+        let Some(old_rt) = name_to_rt.get(t.name.as_str()) else { continue };
+
         let new_period = base_step_period(new_cfg.bpm, t.div);
-        if let Some(old_rt) = name_to_rt.get(t.name.as_str()) {
-            // Compute remaining time in old schedule
-            let old_period = old_rt.base_period;
-            let remaining_old = time_until_next(now, old_rt.next_time, old_period);
-            let new_remaining = if old_period.as_nanos() > 0 {
-                let scale = new_period.as_secs_f64() / old_period.as_secs_f64();
-                Duration::from_secs_f64((remaining_old.as_secs_f64() * scale).max(0.0))
-            } else {
-                new_period
-            };
-            let new_next = now + new_remaining;
-            let new_token_index = if t.pattern.is_empty() { 0 } else { old_rt.token_index % t.pattern.len() };
-            out.push(TrackRuntime {
-                data: t.data.clone(),
-                gain: t.gain,
-                steps: t.steps.clone(),
-                pattern: t.pattern.clone(),
-                delay: t.delay.clone(),
-                base_period: new_period,
-                next_time: new_next,
-                token_index: new_token_index,
-                muted: t.muted,
-                div: t.div,
-                playback: t.playback,
-                voices: Vec::new(),
-                pending_ratchets: Vec::new(),
-                rng: old_rt.rng.clone(), // Preserve RNG state
-            });
+        // Compute remaining time in old schedule
+        let old_period = old_rt.base_period;
+        let remaining_old = time_until_next(now, old_rt.next_time, old_period);
+        let new_remaining = if old_period.as_nanos() > 0 {
+            let scale = new_period.as_secs_f64() / old_period.as_secs_f64();
+            Duration::from_secs_f64((remaining_old.as_secs_f64() * scale).max(0.0))
         } else {
-            // New track: sync to first existing track's phase
-            let track_idx = out.len();
-            let pattern_len = t.pattern.len().max(1);
-            
-            // Find the first existing track to sync with
-            let (synced_token_index, synced_next_time) = if let Some(first_rt) = out.first() {
-                // Sync to first track's current position (scaled to our pattern length)
-                let first_pos = first_rt.token_index;
-                let first_len = first_rt.pattern.len().max(1);
-                // Calculate equivalent position in our pattern
-                let our_pos = (first_pos * pattern_len / first_len) % pattern_len;
-                (our_pos, first_rt.next_time)
-            } else {
-                // No existing tracks - start at beginning
-                (0, next_global_step_time)
+            new_period
+        };
+        let new_next = now + new_remaining;
+        let new_token_index = if t.pattern.is_empty() { 0 } else { old_rt.token_index % t.pattern.len() };
+
+        let rt = TrackRuntime {
+            data: t.data.clone(),
+            gain: t.gain,
+            steps: t.steps.clone(),
+            pattern: t.pattern.clone(),
+            delay: t.delay.clone(),
+            base_period: new_period,
+            next_time: new_next,
+            token_index: new_token_index,
+            muted: t.muted,
+            div: t.div,
+            playback: t.playback,
+            voices: Vec::new(),
+            pending_ratchets: Vec::new(),
+            rng: old_rt.rng.clone(), // Preserve RNG state
+        };
+
+        // Master selection: longest loop in beats (pattern_len / div)
+        let pattern_len = t.pattern.len();
+        if pattern_len > 0 {
+            let beats_num = pattern_len as u64;
+            let beats_den = t.div.max(1) as u64;
+            let replace = match &master {
+                None => true,
+                Some(m) => (beats_num as u128) * (m.beats_den as u128) > (m.beats_num as u128) * (beats_den as u128),
             };
-            
-            out.push(TrackRuntime {
-                data: t.data.clone(),
-                gain: t.gain,
-                steps: t.steps.clone(),
-                pattern: t.pattern.clone(),
-                delay: t.delay.clone(),
-                base_period: new_period,
-                next_time: synced_next_time,
-                token_index: synced_token_index,
-                muted: t.muted,
-                div: t.div,
-                playback: t.playback,
-                voices: Vec::new(),
-                pending_ratchets: Vec::new(),
-                rng: SimpleRng::new((track_idx as u64 + 1) * 12345),
-            });
+            if replace {
+                master = Some(MasterCandidate {
+                    name: t.name.clone(),
+                    pattern_len,
+                    div: t.div.max(1),
+                    token_index: rt.token_index,
+                    next_time: rt.next_time,
+                    beats_num,
+                    beats_den,
+                });
+            }
         }
+
+        preserved.insert(t.name.clone(), rt);
+    }
+
+    let master_downbeat_time = if let Some(m) = &master {
+        next_loop_downbeat_time(
+            now,
+            m.next_time,
+            m.token_index,
+            m.pattern_len,
+            new_cfg.bpm,
+            m.div,
+            new_cfg.swing,
+        )
+    } else {
+        next_global_step_time
+    };
+
+    // Pass 2: build output in new_cfg order; new tracks start fresh at the master downbeat.
+    let mut out: Vec<TrackRuntime> = Vec::with_capacity(new_cfg.tracks.len());
+    for (i, t) in new_cfg.tracks.iter().enumerate() {
+        if let Some(rt) = preserved.remove(&t.name) {
+            out.push(rt);
+            continue;
+        }
+        let new_period = base_step_period(new_cfg.bpm, t.div);
+        out.push(TrackRuntime {
+            data: t.data.clone(),
+            gain: t.gain,
+            steps: t.steps.clone(),
+            pattern: t.pattern.clone(),
+            delay: t.delay.clone(),
+            base_period: new_period,
+            next_time: master_downbeat_time,
+            token_index: 0,
+            muted: t.muted,
+            div: t.div,
+            playback: t.playback,
+            voices: Vec::new(),
+            pending_ratchets: Vec::new(),
+            rng: SimpleRng::new((i as u64 + 1) * 12345),
+        });
     }
     out
 }
@@ -728,6 +771,29 @@ fn time_until_next(now: Instant, next_time: Instant, period: Duration) -> Durati
         let rem = p - (late % p);
         if rem == p { Duration::from_millis(0) } else { Duration::from_secs_f64(rem) }
     }
+}
+
+fn next_loop_downbeat_time(
+    _now: Instant,
+    next_time: Instant,
+    token_index: usize,
+    pattern_len: usize,
+    bpm: u32,
+    div: u32,
+    swing: u8,
+) -> Instant {
+    if pattern_len == 0 {
+        return next_time;
+    }
+    let token_index = token_index % pattern_len;
+    if token_index == 0 {
+        return next_time;
+    }
+    let mut t = next_time;
+    for step_idx in token_index..pattern_len {
+        t += step_period_with_swing(bpm, div, swing, step_idx);
+    }
+    t
 }
 
 // --- Swing helpers (pure, testable) ---
@@ -851,5 +917,91 @@ mod playback_mode_tests {
         // Check sustain via the new steps structure
         let sustain = cfg.tracks[0].steps.get(0).map(|s| s.hold_steps);
         assert_eq!(sustain, Some(8));
+    }
+}
+
+#[cfg(test)]
+mod merge_runtime_phase_tests {
+    use super::*;
+    use crate::model::fx::Delay;
+    use crate::model::track::TrackPlayback;
+    use std::time::Duration;
+
+    fn lt(
+        name: &str,
+        pattern_len: usize,
+        div: u32,
+    ) -> LoadedTrack {
+        LoadedTrack {
+            name: name.to_string(),
+            data: Vec::new(),
+            gain: 1.0,
+            steps: Vec::new(),
+            pattern: vec![false; pattern_len],
+            delay: Delay::default(),
+            div: div.max(1),
+            muted: false,
+            playback: TrackPlayback::Gate,
+        }
+    }
+
+    fn rt(
+        bpm: u32,
+        div: u32,
+        pattern_len: usize,
+        token_index: usize,
+        next_time: Instant,
+    ) -> TrackRuntime {
+        TrackRuntime {
+            data: Vec::new(),
+            gain: 1.0,
+            steps: Vec::new(),
+            pattern: vec![false; pattern_len],
+            delay: Delay::default(),
+            base_period: base_step_period(bpm, div),
+            next_time,
+            token_index,
+            muted: false,
+            div,
+            playback: TrackPlayback::Gate,
+            voices: Vec::new(),
+            pending_ratchets: Vec::new(),
+            rng: SimpleRng::new(12345),
+        }
+    }
+
+    #[test]
+    fn new_track_waits_until_next_downbeat_of_longest_loop_in_beats() {
+        let now = Instant::now();
+        // Track A: longer token pattern, but shorter in beats (16/4 = 4 beats)
+        let a = lt("A", 16, 4);
+        // Track B: shorter token pattern, but longer in beats (8/1 = 8 beats) => master
+        let b = lt("B", 8, 1);
+        let c = lt("C", 4, 4); // new track
+
+        let old_cfg = SequencerConfig { bpm: 60, swing: 0, repeat: true, tracks: vec![a.clone(), b.clone()] };
+        let new_cfg = SequencerConfig { bpm: 60, swing: 0, repeat: true, tracks: vec![a.clone(), b.clone(), c.clone()] };
+
+        // Existing runtime state: A is first, but B is the longest loop in beats.
+        let old_rt = vec![
+            rt(old_cfg.bpm, a.div, a.pattern.len(), 0, now + Duration::from_millis(100)),
+            rt(old_cfg.bpm, b.div, b.pattern.len(), 3, now + Duration::from_millis(200)),
+        ];
+
+        let merged = merge_runtime_preserving_phase(&old_cfg, &new_cfg, &old_rt, now, 0, now);
+        assert_eq!(merged.len(), 3);
+
+        // Existing tracks keep their phase.
+        assert_eq!(merged[0].token_index, 0);
+        assert_eq!(merged[0].next_time, now + Duration::from_millis(100));
+        assert_eq!(merged[1].token_index, 3);
+        assert_eq!(merged[1].next_time, now + Duration::from_millis(200));
+
+        // New track starts fresh, but waits until next downbeat of master (track B).
+        assert_eq!(merged[2].token_index, 0);
+        // Track B token_index=3, len=8 => downbeat at next_time + (8-3) * 1s = +5s
+        let expected = Duration::from_millis(200) + Duration::from_secs(5);
+        let actual = merged[2].next_time.duration_since(now);
+        assert_eq!(actual, expected);
     }
 }
