@@ -204,7 +204,9 @@ pub fn help_box() -> String {
 {v}                                                    {v}
 {v}  TRANSPORT                                         {v}
 {v}    go, play      play                              {v}
+{v}    >             play                              {v}
 {v}    . , stop      stop                              {v}
+{v}    <             play                              {v}
 {v}    120           set tempo                         {v}
 {v}                                                    {v}
 {v}  TRACKS                                            {v}
@@ -217,6 +219,9 @@ pub fn help_box() -> String {
 {v}    kick ~ path   set sample                        {v}
 {v}    analyze kick  detect sample root note           {v}
 {v}    root kick c4  set root note manually            {v}
+{v}    * > chorus    wildcard variation switch         {v}
+{v}    macro m "..." define macro                      {v}
+{v}    show kick [var] show pattern                    {v}
 {v}    kick x... ~q -3db  chain actions                {v}
 {v}    kick -3db     gain                              {v}
 {v}    kick mute     mute (unmute to undo)             {v}

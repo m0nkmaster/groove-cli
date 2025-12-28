@@ -1,0 +1,167 @@
+bpm: 124
+steps: 16
+swing: 0
+repeat: true
+tracks:
+- name: kick
+  sample: samples/80s Drum Machines/Linn LinnDrum/ALL/Kick SD_80s_LinnDrum.wav
+  sample_root:
+    freq_hz: 2004.5454
+    midi_note: 95
+    cents: 25.239563
+    confidence: 0.97867215
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual x.......x.x...x.
+  variations:
+    chorus: !Visual x.....x.x.x.x...
+    bridge: !Visual x.......x.......
+  mute: false
+  solo: false
+  playback: one_shot
+  gain_db: 0.0
+  div: 4
+
+- name: snare
+  sample: samples/80s Drum Machines/Linn LinnDrum/ALL/Snare High SD_80s_LinnDrum.wav
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual '....x.......x...'
+  variations:
+    chorus: !Visual '....x..x....x..x'
+    bridge: !Visual '........x.......'
+  mute: false
+  solo: false
+  playback: one_shot
+  gain_db: -1.0
+  div: 4
+
+- name: hat
+  sample: samples/80s Drum Machines/Linn LinnDrum/ALL/Hi Hat Closed Low SD_80s_LinnDrum.wav
+  sample_root:
+    freq_hz: 336.64124
+    midi_note: 64
+    cents: 36.450195
+    confidence: 0.21205485
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual x.x.x.x.x.x.x.x.
+  variations:
+    chorus: !Visual xXxXxXxXxXxXxXxX
+    bridge: !Visual x...x...x...x...
+  mute: false
+  solo: false
+  playback: one_shot
+  gain_db: -8.0
+  div: 4
+
+- name: ohat
+  sample: samples/80s Drum Machines/Linn LinnDrum/ALL/Hi Hat Open High SD_80s_LinnDrum.wav
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual '..............x.'
+  variations:
+    chorus: !Visual '......x.......x.'
+    bridge: !Visual '................'
+  mute: false
+  solo: false
+  playback: one_shot
+  gain_db: -11.0
+  div: 4
+
+- name: crash
+  sample: samples/80s Drum Machines/Linn LinnDrum/ALL/Crash SD_80s_LinnDrum.wav
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual '................'
+  variations:
+    chorus: !Visual x...............
+    bridge: !Visual '................'
+  mute: false
+  solo: false
+  playback: one_shot
+  gain_db: -8.0
+  div: 4
+
+- name: bass
+  sample: samples/synth/Midnight Arp Pluck.wav
+  sample_root:
+    freq_hz: 219.40298
+    midi_note: 57
+    cents: -4.7042847
+    confidence: 0.98164433
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual a___ d___ e___ d___
+  variations:
+    chorus: !Visual a___ e___ f#___ d___
+    bridge: !Visual f#_______ d_______
+  mute: false
+  solo: false
+  playback: gate
+  gain_db: -3.0
+  div: 4
+
+- name: piano
+  sample: samples/synth/Traditional Family Piano.wav
+  sample_root:
+    freq_hz: 436.63367
+    midi_note: 69
+    cents: -13.296509
+    confidence: 0.9969742
+  delay:
+    on: false
+    time: 1/4
+    feedback: 0.35
+    mix: 0.25
+  pattern: !Visual (a c# e)___ (d f# a)___ (e g# b)___ (d f# a)___
+  variations:
+    chorus: !Visual (a c# e)___ (e g# b)___ (f# a c#)___ (d f# a)___
+    bridge: !Visual (f# a c#)_______ (d f# a)_______
+  mute: false
+  solo: false
+  playback: gate
+  gain_db: -2.5
+  div: 4
+
+- name: lead
+  sample: samples/synth/C4_2.wav
+  sample_root:
+    freq_hz: 130.47337
+    midi_note: 48
+    cents: -4.497528
+    confidence: 0.9869822
+  delay:
+    on: true
+    time: 1/8
+    feedback: 0.22
+    mix: 0.18
+  pattern: !Visual a4. c#5. e5. c#5. b4. c#5. a4. e5.
+  variations:
+    chorus: !Visual e5. f#5. g#5. a5. g#5. f#5. e5. c#5.
+    bridge: !Visual e5_______ c#5_______
+  mute: false
+  solo: false
+  playback: gate
+  gain_db: -2.0
+  div: 4
+
+

@@ -50,6 +50,26 @@ pub struct TuiApp {
     console: console::Subscription,
     should_quit: bool,
     completion_cycle: Option<CompletionCycle>,
+    help_open: bool,
+    help_scroll: u16,
+    help_text: String,
+}
+
+fn selected_track_from_line(line: &str, song: &Song) -> Option<String> {
+    let l = line.trim();
+    if l.is_empty() || l.starts_with(':') {
+        return None;
+    }
+    let mut parts = shlex::Shlex::new(l);
+    let first = parts.next()?;
+    let track_sel = first.split('.').next().unwrap_or("");
+    if track_sel.contains('*') {
+        return None;
+    }
+    song.tracks
+        .iter()
+        .find(|t| t.name.eq_ignore_ascii_case(track_sel))
+        .map(|t| t.name.clone())
 }
 
 impl TuiApp {
@@ -61,6 +81,9 @@ impl TuiApp {
             console: console::subscribe(),
             should_quit: false,
             completion_cycle: None,
+            help_open: false,
+            help_scroll: 0,
+            help_text: String::new(),
         }
     }
 
@@ -101,6 +124,28 @@ impl TuiApp {
     }
 
     fn handle_key(&mut self, code: KeyCode, mods: KeyModifiers) {
+        if self.help_open {
+            match code {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.help_open = false;
+                }
+                KeyCode::Up => {
+                    self.help_scroll = self.help_scroll.saturating_sub(1);
+                }
+                KeyCode::Down => {
+                    self.help_scroll = self.help_scroll.saturating_add(1);
+                }
+                KeyCode::PageUp => {
+                    self.help_scroll = self.help_scroll.saturating_sub(10);
+                }
+                KeyCode::PageDown => {
+                    self.help_scroll = self.help_scroll.saturating_add(10);
+                }
+                _ => {}
+            }
+            return;
+        }
+
         if mods.contains(KeyModifiers::CONTROL) {
             match code {
                 KeyCode::Char('c') | KeyCode::Char('d') => {
@@ -141,6 +186,13 @@ impl TuiApp {
     fn execute(&mut self, line: &str) {
         if line == ":q" || line == ":quit" || line == "exit" || line == "quit" {
             self.should_quit = true;
+            return;
+        }
+
+        if line == ":help" || line == "?" {
+            self.help_open = true;
+            self.help_scroll = 0;
+            self.help_text = crate::repl::style::help_box();
             return;
         }
 
@@ -232,8 +284,13 @@ impl TuiApp {
     }
 
     fn msg(&mut self, text: &str, level: Level) {
-        self.messages.push(Message { text: text.to_string(), level });
-        if self.messages.len() > 50 {
+        for line in text.lines() {
+            self.messages.push(Message {
+                text: line.to_string(),
+                level,
+            });
+        }
+        while self.messages.len() > 200 {
             self.messages.remove(0);
         }
     }
@@ -260,6 +317,25 @@ impl TuiApp {
         self.render_tracker(frame, chunks[1], snap);
         self.render_messages(frame, chunks[2]);
         self.render_input(frame, chunks[3]);
+
+        if self.help_open {
+            self.render_help(frame, area);
+        }
+    }
+
+    fn render_help(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::default()
+            .title(" Help  (Esc/q to close, ↑/↓ scroll) ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Rgb(90, 90, 90)));
+        frame.render_widget(ratatui::widgets::Clear, area);
+        frame.render_widget(
+            Paragraph::new(self.help_text.clone())
+                .block(block)
+                .scroll((self.help_scroll, 0))
+                .wrap(Wrap { trim: false }),
+            area,
+        );
     }
 
     fn render_header(&self, frame: &mut Frame, area: Rect, snap: Option<&audio::LiveSnapshot>) {
@@ -297,7 +373,14 @@ impl TuiApp {
             .title(" Tracks ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Rgb(60, 60, 60)));
-        frame.render_widget(TrackerGrid::new(&self.song).block(block).snapshot(snap), area);
+        let selected = selected_track_from_line(self.input.value(), &self.song);
+        frame.render_widget(
+            TrackerGrid::new(&self.song)
+                .block(block)
+                .snapshot(snap)
+                .selected_track(selected),
+            area,
+        );
     }
 
     fn render_messages(&self, frame: &mut Frame, area: Rect) {
@@ -364,6 +447,35 @@ impl TuiApp {
             let cursor_x = inner.x + (prompt_width as u16) + cursor_rel;
             frame.set_cursor_position((cursor_x.min(inner.x + inner.width - 1), inner.y));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn msg_splits_multiline_text_into_separate_messages() {
+        let mut app = TuiApp::new(Song::default());
+        app.msg("a\nb\nc", Level::Info);
+        assert_eq!(app.messages.len(), 3);
+        assert_eq!(app.messages[0].text, "a");
+        assert_eq!(app.messages[1].text, "b");
+        assert_eq!(app.messages[2].text, "c");
+    }
+
+    #[test]
+    fn help_opens_and_closes_via_keys() {
+        let mut app = TuiApp::new(Song::default());
+        app.execute(":help");
+        assert!(app.help_open);
+        assert!(!app.help_text.is_empty());
+
+        app.handle_key(KeyCode::Down, KeyModifiers::empty());
+        assert!(app.help_scroll > 0);
+
+        app.handle_key(KeyCode::Esc, KeyModifiers::empty());
+        assert!(!app.help_open);
     }
 }
 

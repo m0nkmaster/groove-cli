@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex as StdMutex;
 use std::thread;
@@ -122,6 +122,11 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
         return Ok(Output::Text(help_box()));
     }
 
+    // Macros: single-word actions that expand into longer command chains.
+    if let Some(expanded) = try_expand_macro(song, l) {
+        return handle_line_internal(song, &expanded, true);
+    }
+
     if allow_chain {
         if let Some(commands) = parse_chained_commands(l) {
             let mut texts = Vec::new();
@@ -210,9 +215,17 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
             crate::audio::play_song(song)?;
             return Ok(Output::Text(playing()));
         }
+        ">" => {
+            crate::audio::play_song(song)?;
+            return Ok(Output::Text(playing()));
+        }
         "." => {
             crate::audio::stop();
             return Ok(Output::Text(stopped()));
+        }
+        "<" => {
+            crate::audio::play_song(song)?;
+            return Ok(Output::Text(playing()));
         }
         "ls" => {
             return Ok(Output::Text(format_track_list(song)));
@@ -224,6 +237,31 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
                 Ok(Output::Text(tempo(song.bpm)))
             } else {
                 bail!("usage: bpm <number>");
+            }
+        }
+        "macro" => {
+            let Some(name) = parts.next() else {
+                let list = list_macros();
+                if list.is_empty() {
+                    return Ok(Output::Text("no macros defined".into()));
+                }
+                return Ok(Output::Text(list));
+            };
+            let body: String = parts.collect::<Vec<_>>().join(" ").trim_matches('"').to_string();
+            if body.trim().is_empty() {
+                bail!("usage: macro <name> \"cmd1; cmd2; ...\"");
+            }
+            set_macro(&name, &body);
+            Ok(Output::Text(success(&format!("macro {}", name))))
+        }
+        "unmacro" => {
+            let name = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: unmacro <name>"))?;
+            if remove_macro(&name) {
+                Ok(Output::Text(success(&format!("unmacro {}", name))))
+            } else {
+                Ok(Output::Text(format!("  {} no macro \"{}\"", EMOJI_THINK, name)))
             }
         }
         "steps" => {
@@ -393,6 +431,44 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
                 Ok(Output::Text(format!("  {}  variations: {}", name, vars.join(", "))))
             }
         }
+        "show" => {
+            let idx = parts
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("usage: show <track> [variation]"))?;
+            let var = parts.next();
+
+            let pos = parse_track_index(song, &idx)?;
+            let track = song
+                .tracks
+                .get(pos)
+                .ok_or_else(|| anyhow::anyhow!("no such track index"))?;
+
+            let (display_name, pat) = match var {
+                None => {
+                    let pat = track
+                        .active_pattern()
+                        .ok_or_else(|| anyhow::anyhow!("track '{}' has no active pattern", track.name))?;
+                    (track.name.clone(), pat)
+                }
+                Some(v) if v == "main" || v == "-" => {
+                    let pat = track
+                        .pattern
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("track '{}' has no main pattern", track.name))?;
+                    (track.name.clone(), pat)
+                }
+                Some(v) => {
+                    let pat = track
+                        .variations
+                        .get(&v)
+                        .ok_or_else(|| anyhow::anyhow!("variation '{}' not found for track '{}'", v, track.name))?;
+                    (format!("{}.{}", track.name, v), pat)
+                }
+            };
+
+            let Pattern::Visual(src) = pat;
+            Ok(Output::Text(track_pattern(&display_name, src)))
+        }
         "gen" => {
             // Generate a pattern using Rhai scripting
             // Usage: gen <track_idx> `script` or gen `script` (preview only)
@@ -407,7 +483,11 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
                 // Preview mode: just evaluate and print
                 let script = first.trim_matches(|c| c == '`' || c == '"');
                 match engine.eval(script) {
-                    Ok(pattern) => Ok(Output::Text(track_generated("", &pattern))),
+                    Ok(pattern) => Ok(Output::Text(format!(
+                        "  {} thinking...\n{}",
+                        EMOJI_THINK,
+                        track_generated("", &pattern)
+                    ))),
                     Err(e) => Err(anyhow::anyhow!("script error: {}", e)),
                 }
             } else {
@@ -423,7 +503,11 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
                         let name = track.name.clone();
                         track.pattern = Some(Pattern::visual(&pattern));
                         crate::audio::reload_song(song);
-                        Ok(Output::Text(track_generated(&name, &pattern)))
+                        Ok(Output::Text(format!(
+                            "  {} thinking...\n{}",
+                            EMOJI_THINK,
+                            track_generated(&name, &pattern)
+                        )))
                     }
                     Err(e) => Err(anyhow::anyhow!("script error: {}", e)),
                 }
@@ -485,7 +569,7 @@ fn handle_line_internal(song: &mut Song, line: &str, allow_chain: bool) -> Resul
             // Note: No println here - it corrupts TUI display
             match suggest_patterns(&config, &description, &context) {
                 Ok(patterns) => {
-                    let mut output = String::from("Suggestions:\n");
+                    let mut output = format!("  {} thinking...\nSuggestions:\n", EMOJI_THINK);
                     for (i, pat) in patterns.iter().enumerate() {
                         output.push_str(&format!("  {}) {}\n", i + 1, pat));
                     }
@@ -1279,9 +1363,27 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
         (first.clone(), None)
     };
     
-    // Check if first word is a known track name
-    let track_names: Vec<String> = song.tracks.iter().map(|t| t.name.to_lowercase()).collect();
-    if !track_names.contains(&track_name.to_lowercase()) {
+    // Resolve the selector to one or more track names (supports simple `*` wildcards).
+    let selected_tracks: Vec<String> = if track_name.contains('*') {
+        let mut matched: Vec<String> = song
+            .tracks
+            .iter()
+            .filter(|t| glob_match_ci(&track_name, &t.name))
+            .map(|t| t.name.clone())
+            .collect();
+        matched.sort();
+        matched
+    } else {
+        song.tracks
+            .iter()
+            .find(|t| t.name.eq_ignore_ascii_case(&track_name))
+            .map(|t| vec![t.name.clone()])
+            .unwrap_or_default()
+    };
+    if selected_tracks.is_empty() {
+        if track_name.contains('*') {
+            return Err(anyhow!("no tracks match '{}'", track_name));
+        }
         return Ok(None); // Not a track-first command
     }
 
@@ -1293,12 +1395,16 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
     // Atomic per line: apply to a clone, then commit + reload once.
     let mut draft = song.clone();
     let mut out_lines: Vec<String> = Vec::new();
+    let multi_target = selected_tracks.len() > 1 || track_name.contains('*');
 
-    let is_boundary = |t: &str| {
-        matches!(t, "mute" | "unmute" | "solo" | "delay" | "gen" | "ai" | ">")
-            || looks_like_gain(t)
-            || looks_like_pattern(t)
-    };
+    let is_segment_keyword = |t: &str| matches!(t, "mute" | "unmute" | "solo" | "delay" | "gen" | "ai" | ">");
+    // Used for stopping sample query collection (after `~`). We intentionally do NOT treat
+    // note-like tokens (e.g. `c4`) as boundaries so they can be used as sample search terms.
+    let is_sample_query_boundary = |t: &str| is_segment_keyword(t) || looks_like_gain(t);
+    // Used for stopping numeric arg parsing (e.g. delay fb/mix).
+    let is_boundary = |t: &str| is_segment_keyword(t) || looks_like_gain(t) || looks_like_pattern(t);
+    // Used for collecting multi-token patterns (e.g. `c d e`), stopping at the next segment.
+    let is_pattern_boundary = |t: &str| is_segment_keyword(t) || looks_like_gain(t) || t == "~" || t.starts_with('~');
 
     let mut i = 0usize;
     while i < tokens.len() {
@@ -1306,20 +1412,26 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
 
         // Pattern: kick x...x...
         if looks_like_pattern(tok) {
-            let pat = tok;
+            let mut j = i;
+            let mut pat_parts: Vec<String> = Vec::new();
+            while j < tokens.len() && !is_pattern_boundary(tokens[j].as_str()) {
+                pat_parts.push(tokens[j].clone());
+                j += 1;
+            }
+            let pat = pat_parts.join(" ");
             let msg = {
                 let (_, track) = track_mut(&mut draft, &track_name)?;
                 let name = track.name.clone();
                 if let Some(ref var_name) = variation {
-                    track.variations.insert(var_name.clone(), Pattern::visual(pat));
-                    track_pattern(&format!("{}.{}", name, var_name), pat)
+                    track.variations.insert(var_name.clone(), Pattern::visual(&pat));
+                    track_pattern(&format!("{}.{}", name, var_name), &pat)
                 } else {
-                    track.pattern = Some(Pattern::visual(pat));
-                    track_pattern(&name, pat)
+                    track.pattern = Some(Pattern::visual(&pat));
+                    track_pattern(&name, &pat)
                 }
             };
             out_lines.push(msg);
-            i += 1;
+            i = j.max(i + 1);
             continue;
         }
 
@@ -1347,7 +1459,7 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
 
                 // Collect query tokens until we hit another segment boundary.
                 let mut query_parts: Vec<String> = Vec::new();
-                while j < tokens.len() && !is_boundary(tokens[j].as_str()) {
+                while j < tokens.len() && !is_sample_query_boundary(tokens[j].as_str()) {
                     query_parts.push(tokens[j].clone());
                     j += 1;
                 }
@@ -1436,7 +1548,7 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
                 let first_part = s.trim_start_matches('~');
                 let mut j = i + 1;
                 let mut query_parts: Vec<String> = vec![first_part.to_string()];
-                while j < tokens.len() && !is_boundary(tokens[j].as_str()) {
+                while j < tokens.len() && !is_sample_query_boundary(tokens[j].as_str()) {
                     query_parts.push(tokens[j].clone());
                     j += 1;
                 }
@@ -1506,20 +1618,26 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
                     .get(i + 1)
                     .ok_or_else(|| anyhow!("usage: trackname > variation"))?
                     .to_string();
-                let msg = {
-                    let (_, track) = track_mut(&mut draft, &track_name)?;
-                    let name = track.name.clone();
-                    if var_name == "main" || var_name == "-" {
-                        track.current_variation = None;
-                        track_variation(&name, "main")
-                    } else if track.variations.contains_key(&var_name) {
-                        track.current_variation = Some(var_name.clone());
-                        track_variation(&name, &var_name)
-                    } else {
-                        return Err(anyhow!("variation '{}' not found", var_name));
+                for sel in &selected_tracks {
+                    let msg_opt = {
+                        let (_, track) = track_mut(&mut draft, sel)?;
+                        let name = track.name.clone();
+                        if var_name == "main" || var_name == "-" {
+                            track.current_variation = None;
+                            Some(track_variation(&name, "main"))
+                        } else if track.variations.contains_key(&var_name) {
+                            track.current_variation = Some(var_name.clone());
+                            Some(track_variation(&name, &var_name))
+                        } else if multi_target {
+                            None // ignore missing variations for wildcard selectors
+                        } else {
+                            return Err(anyhow!("variation '{}' not found", var_name));
+                        }
+                    };
+                    if let Some(msg) = msg_opt {
+                        out_lines.push(msg);
                     }
-                };
-                out_lines.push(msg);
+                }
                 i += 2;
             }
             "delay" => {
@@ -1583,6 +1701,7 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
                     .to_string();
                 let script = script.trim_matches(|c| c == '`' || c == '"');
                 let engine = PatternEngine::new();
+                out_lines.push(format!("  {} thinking...", EMOJI_THINK));
                 let pattern = engine.eval(script).map_err(|e| anyhow!("script error: {}", e))?;
 
                 let msg = {
@@ -1611,6 +1730,7 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
                 if description.trim().is_empty() {
                     return Err(anyhow!("usage: trackname ai \"description\""));
                 }
+                out_lines.push(format!("  {} thinking...", EMOJI_THINK));
 
                 let config = AiConfig::default();
                 let context = PatternContext {
@@ -1668,6 +1788,36 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
                 }
             }
             other => {
+                // Shorthand: if the token matches a variation name, treat it as `> var`.
+                // This enables `*piano* bridge` as sugar for `*piano* > bridge`.
+                let var_name = other.to_string();
+                let mut any_applied = false;
+                for sel in &selected_tracks {
+                    let msg_opt = {
+                        let (_, track) = track_mut(&mut draft, sel)?;
+                        let name = track.name.clone();
+                        if var_name == "main" || var_name == "-" {
+                            any_applied = true;
+                            track.current_variation = None;
+                            Some(track_variation(&name, "main"))
+                        } else if track.variations.contains_key(&var_name) {
+                            any_applied = true;
+                            track.current_variation = Some(var_name.clone());
+                            Some(track_variation(&name, &var_name))
+                        } else if multi_target {
+                            None
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(msg) = msg_opt {
+                        out_lines.push(msg);
+                    }
+                }
+                if any_applied {
+                    i += 1;
+                    continue;
+                }
                 return Err(anyhow!("unknown track command segment: {}", other));
             }
         }
@@ -1685,7 +1835,46 @@ fn try_track_first_command(song: &mut Song, line: &str) -> Result<Option<Output>
 /// Check if a string looks like a pattern (visual tokens or note tokens at start)
 fn looks_like_pattern(s: &str) -> bool {
     let first = s.chars().next().unwrap_or(' ');
-    matches!(first, 'x' | 'X' | '.' | 'a'..='g' | 'A'..='G')
+    if matches!(first, 'x' | 'X' | '.') {
+        return true;
+    }
+    if matches!(first, 'a'..='g' | 'A'..='G') {
+        return crate::pattern::visual::parse_visual_pattern(s).is_ok();
+    }
+    false
+}
+
+fn glob_match_ci(pattern: &str, candidate: &str) -> bool {
+    let p = pattern.to_lowercase();
+    let c = candidate.to_lowercase();
+    if !p.contains('*') {
+        return p == c;
+    }
+    let starts_with_wildcard = p.starts_with('*');
+    let ends_with_wildcard = p.ends_with('*');
+    let parts: Vec<&str> = p.split('*').filter(|s| !s.is_empty()).collect();
+    if parts.is_empty() {
+        return true; // pattern "*" or similar
+    }
+
+    let mut idx = 0usize;
+    for (pi, part) in parts.iter().enumerate() {
+        if let Some(found) = c[idx..].find(part) {
+            let abs = idx + found;
+            if pi == 0 && !starts_with_wildcard && abs != 0 {
+                return false;
+            }
+            idx = abs + part.len();
+        } else {
+            return false;
+        }
+    }
+    if !ends_with_wildcard {
+        if let Some(last) = parts.last() {
+            return c.ends_with(last);
+        }
+    }
+    true
 }
 
 /// Check if a string looks like a gain value (-3db, +2db, -3, +2)
@@ -1759,6 +1948,58 @@ pub fn update_track_names(song: &Song) {
     if let Ok(mut names) = TRACK_NAMES.lock() {
         *names = song.tracks.iter().map(|t| t.name.clone()).collect();
     }
+}
+
+// --- Macros (one-word command expansions) ---
+static MACROS: once_cell::sync::Lazy<StdMutex<HashMap<String, String>>> =
+    once_cell::sync::Lazy::new(|| StdMutex::new(HashMap::new()));
+
+fn set_macro(name: &str, body: &str) {
+    if let Ok(mut m) = MACROS.lock() {
+        m.insert(name.to_lowercase(), body.to_string());
+    }
+}
+
+fn remove_macro(name: &str) -> bool {
+    if let Ok(mut m) = MACROS.lock() {
+        return m.remove(&name.to_lowercase()).is_some();
+    }
+    false
+}
+
+fn list_macros() -> String {
+    let Ok(m) = MACROS.lock() else {
+        return String::new();
+    };
+    if m.is_empty() {
+        return String::new();
+    }
+    let mut names: Vec<&String> = m.keys().collect();
+    names.sort();
+    let mut out = String::new();
+    for name in names {
+        out.push_str(&format!("  {}\n", name));
+    }
+    out.trim_end().to_string()
+}
+
+fn try_expand_macro(song: &Song, line: &str) -> Option<String> {
+    let mut parts = shlex::Shlex::new(line);
+    let first = parts.next()?;
+    // Only expand single-token lines.
+    if parts.next().is_some() {
+        return None;
+    }
+    // Don't shadow track names.
+    if song
+        .tracks
+        .iter()
+        .any(|t| t.name.eq_ignore_ascii_case(&first))
+    {
+        return None;
+    }
+    let Ok(m) = MACROS.lock() else { return None };
+    m.get(&first.to_lowercase()).cloned()
 }
 
 /// Get current track names for autocomplete.
@@ -2229,6 +2470,154 @@ mod tests {
         let mut song = Song::default();
         song.tracks.push(Track::new("Kick"));
         song
+    }
+
+    #[test]
+    fn wildcard_variation_switch_applies_to_matching_tracks() {
+        let mut song = Song::default();
+        let mut kick = Track::new("Kick");
+        kick.variations.insert("chorus".into(), Pattern::visual("x...x...x...x..."));
+        let mut piano = Track::new("Piano");
+        piano.variations.insert("chorus".into(), Pattern::visual("(c e g)___ (d f# a)___"));
+        let snare = Track::new("Snare"); // no chorus variation
+        song.tracks = vec![kick, piano, snare];
+
+        handle_line(&mut song, "* > chorus").expect("wildcard chorus");
+
+        assert_eq!(song.tracks[0].current_variation.as_deref(), Some("chorus"));
+        assert_eq!(song.tracks[1].current_variation.as_deref(), Some("chorus"));
+        assert_eq!(song.tracks[2].current_variation, None);
+    }
+
+    #[test]
+    fn wildcard_selector_supports_contains_match() {
+        let mut song = Song::default();
+        let mut piano = Track::new("piano_main");
+        piano.variations.insert("bridge".into(), Pattern::visual("c___ d___ e___ d___"));
+        let mut epiano = Track::new("ePiano");
+        epiano.variations.insert("bridge".into(), Pattern::visual("a___ d___ e___ d___"));
+        let bass = Track::new("bass");
+        song.tracks = vec![piano, epiano, bass];
+
+        // Shorthand: `bridge` is treated as `> bridge` when it matches a variation.
+        handle_line(&mut song, "*piano* bridge").expect("wildcard bridge");
+
+        assert_eq!(song.tracks[0].current_variation.as_deref(), Some("bridge"));
+        assert_eq!(song.tracks[1].current_variation.as_deref(), Some("bridge"));
+        assert_eq!(song.tracks[2].current_variation, None);
+    }
+
+    #[test]
+    fn macro_can_expand_to_multiple_commands() {
+        let mut song = Song::default();
+        let mut kick = Track::new("Kick");
+        kick.variations.insert("chorus".into(), Pattern::visual("x...x...x...x..."));
+        let mut snare = Track::new("Snare");
+        snare.variations.insert("chorus".into(), Pattern::visual("....x.......x..."));
+        song.tracks = vec![kick, snare];
+
+        handle_line(&mut song, "macro chorus \"* > chorus; snare mute\"").expect("define");
+        handle_line(&mut song, "chorus").expect("run");
+
+        assert_eq!(song.tracks[0].current_variation.as_deref(), Some("chorus"));
+        assert_eq!(song.tracks[1].current_variation.as_deref(), Some("chorus"));
+        assert!(song.tracks[1].mute);
+    }
+
+    #[test]
+    fn play_alias_gt_is_accepted() {
+        let mut song = Song::default();
+        let err = handle_line(&mut song, ">").err().expect("should error without samples");
+        assert!(err.to_string().contains("no playable samples"));
+    }
+
+    #[test]
+    fn play_alias_lt_is_accepted() {
+        let mut song = Song::default();
+        let err = handle_line(&mut song, "<").err().expect("should error without samples");
+        assert!(err.to_string().contains("no playable samples"));
+    }
+
+    #[test]
+    fn ai_command_output_includes_thinking_icon() {
+        let mut song = Song::default();
+        let out = handle_line(&mut song, "ai \"four on the floor\"").expect("ai");
+        let Output::Text(t) = out else { panic!("expected text") };
+        assert!(t.contains(EMOJI_THINK), "got: {t}");
+    }
+
+    #[test]
+    fn gen_command_output_includes_thinking_icon() {
+        let mut song = Song::default();
+        let out = handle_line(&mut song, "gen `fill(16)`").expect("gen");
+        let Output::Text(t) = out else { panic!("expected text") };
+        assert!(t.contains(EMOJI_THINK), "got: {t}");
+    }
+
+    #[test]
+    fn show_prints_active_pattern_for_track() {
+        let mut song = Song::default();
+        let mut tr = Track::new("Synth");
+        tr.pattern = Some(Pattern::visual("c d e"));
+        tr.variations.insert("chorus".into(), Pattern::visual("(c e g)___"));
+        tr.current_variation = Some("chorus".into());
+        song.tracks.push(tr);
+
+        let out = handle_line(&mut song, "show synth").expect("show");
+        let Output::Text(t) = out else { panic!("expected text") };
+        assert!(t.contains("(c e g)___"), "got: {t}");
+    }
+
+    #[test]
+    fn show_can_target_main_or_named_variation() {
+        let mut song = Song::default();
+        let mut tr = Track::new("Synth");
+        tr.pattern = Some(Pattern::visual("c d e"));
+        tr.variations.insert("chorus".into(), Pattern::visual("(c e g)___"));
+        song.tracks.push(tr);
+
+        let out_main = handle_line(&mut song, "show 1 main").expect("show main");
+        let Output::Text(t_main) = out_main else { panic!("expected text") };
+        assert!(t_main.contains("c d e"), "got: {t_main}");
+
+        let out_var = handle_line(&mut song, "show 1 chorus").expect("show chorus");
+        let Output::Text(t_var) = out_var else { panic!("expected text") };
+        assert!(t_var.contains("(c e g)___"), "got: {t_var}");
+    }
+
+    #[test]
+    fn track_first_ai_accepts_unquoted_multi_word_prompt() {
+        let mut song = song_with_track();
+        handle_line(&mut song, "kick ai 4 on the floor").expect("ai");
+        let Pattern::Visual(pat) = song.tracks[0].pattern.clone().expect("pattern");
+        assert_eq!(pat, "x...x...x...x...");
+    }
+
+    #[test]
+    fn track_first_delay_is_not_misparsed_as_pattern() {
+        let mut song = song_with_track();
+        handle_line(&mut song, "kick delay 1/8 0.4 0.3").expect("delay");
+        assert!(song.tracks[0].delay.on);
+        assert_eq!(song.tracks[0].delay.time, "1/8");
+        assert!((song.tracks[0].delay.feedback - 0.4).abs() < 1e-6);
+        assert!((song.tracks[0].delay.mix - 0.3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn track_first_pattern_can_span_multiple_tokens_for_note_sequences() {
+        let mut song = Song::default();
+        song.tracks.push(Track::new("Synth"));
+        handle_line(&mut song, "synth c d e").expect("pattern");
+        let Pattern::Visual(pat) = song.tracks[0].pattern.clone().expect("pattern");
+        assert_eq!(pat, "c d e");
+    }
+
+    #[test]
+    fn track_first_sample_query_can_start_with_note_like_token() {
+        let mut song = song_with_track();
+        handle_line(&mut song, "kick ~ c4").expect("sample");
+        let sample = song.tracks[0].sample.clone().expect("sample set");
+        assert!(std::path::Path::new(&sample).is_file(), "sample path was {sample}");
     }
 
     #[test]

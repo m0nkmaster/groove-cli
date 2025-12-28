@@ -65,7 +65,9 @@ Commands run **left-to-right** and stop at the **first error** (earlier changes 
 ## Global / transport
 
 - **Play**: `go` or `play`
+- **Play (alias)**: `>`
 - **Stop**: `.` or `stop`
+- **Play (alias)**: `<`
 - **Set BPM**: type a number (e.g. `140`) or `bpm 140`
 - **Set swing**: `swing <percent>` (0–100)
 - **Set steps (UI bar length)**: `steps <number>`
@@ -132,6 +134,35 @@ var kick
 var kick fill
 ```
 
+### Show a pattern
+
+Print the **active** pattern for a track (or a specific variation):
+
+```text
+show kick
+show kick main
+show kick chorus
+```
+
+### Wildcard track selection (transitions)
+
+If the “track name” position contains `*`, it matches **multiple tracks** (case-insensitive):
+
+```text
+* > chorus         # switch all matching tracks to chorus (if they have it)
+*piano* bridge     # shorthand for `*piano* > bridge`
+```
+
+### Macros (one-word actions)
+
+Define a macro (store a command chain), then invoke it by name:
+
+```text
+macro chorus "* > chorus; snare mute"
+chorus
+unmacro chorus
+```
+
 ### Generate (Rhai)
 
 Track-first:
@@ -149,7 +180,7 @@ gen kick euclid(5,16)
 Preview only (prints without applying):
 
 ```text
-gen "euclid(5,16)"
+gen `euclid(5,16)`
 ```
 
 ### Progressions (chords)

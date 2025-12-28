@@ -17,11 +17,17 @@ pub struct TrackerGrid<'a> {
     song: &'a Song,
     block: Option<Block<'a>>,
     snapshot: Option<audio::LiveSnapshot>,
+    selected_track: Option<String>,
 }
 
 impl<'a> TrackerGrid<'a> {
     pub fn new(song: &'a Song) -> Self {
-        Self { song, block: None, snapshot: None }
+        Self {
+            song,
+            block: None,
+            snapshot: None,
+            selected_track: None,
+        }
     }
 
     pub fn block(mut self, block: Block<'a>) -> Self {
@@ -31,6 +37,11 @@ impl<'a> TrackerGrid<'a> {
 
     pub fn snapshot(mut self, snapshot: Option<audio::LiveSnapshot>) -> Self {
         self.snapshot = snapshot;
+        self
+    }
+
+    pub fn selected_track(mut self, track_name: Option<String>) -> Self {
+        self.selected_track = track_name;
         self
     }
 
@@ -44,7 +55,12 @@ impl<'a> TrackerGrid<'a> {
 
 impl Widget for TrackerGrid<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let TrackerGrid { song, block, snapshot } = self;
+        let TrackerGrid {
+            song,
+            block,
+            snapshot,
+            selected_track,
+        } = self;
         let snapshot = snapshot.or_else(|| audio::snapshot_live_state());
         let mut area = area;
         if let Some(block) = block {
@@ -62,8 +78,10 @@ impl Widget for TrackerGrid<'_> {
         let col_name = 10usize;
         let col_sample = 14usize;
         let col_note = 10usize;
+        let col_vars = 18usize;
         let col_len = 4usize;
-        let prefix_width = col_num + 1 + col_name + 1 + col_sample + 1 + col_note + 1 + col_len + 2;
+        let prefix_width =
+            col_num + 1 + col_name + 1 + col_sample + 1 + col_note + 1 + col_vars + 1 + col_len + 2;
         if area.width as usize <= prefix_width + 4 {
             // Too narrow to show the grid cleanly.
             let y = area.y;
@@ -96,7 +114,18 @@ impl Widget for TrackerGrid<'_> {
         buf.set_string(area.x + (col_num + 1) as u16, y, &format!("{:<w$}", "TRACK", w = col_name), header_style);
         buf.set_string(area.x + (col_num + 1 + col_name + 1) as u16, y, &format!("{:<w$}", "SAMPLE", w = col_sample), header_style);
         buf.set_string(area.x + (col_num + 1 + col_name + 1 + col_sample + 1) as u16, y, &format!("{:<w$}", "NOTE", w = col_note), header_style);
-        buf.set_string(area.x + (col_num + 1 + col_name + 1 + col_sample + 1 + col_note + 1) as u16, y, &format!("{:>w$}", "LEN", w = col_len), header_style);
+        buf.set_string(
+            area.x + (col_num + 1 + col_name + 1 + col_sample + 1 + col_note + 1) as u16,
+            y,
+            &format!("{:<w$}", "VARS", w = col_vars),
+            header_style,
+        );
+        buf.set_string(
+            area.x + (col_num + 1 + col_name + 1 + col_sample + 1 + col_note + 1 + col_vars + 1) as u16,
+            y,
+            &format!("{:>w$}", "LEN", w = col_len),
+            header_style,
+        );
         
         // Beat markers - use song.steps as reference
         let max_display_steps = grid_width.min(song.steps as usize);
@@ -128,6 +157,10 @@ impl Widget for TrackerGrid<'_> {
             if y >= area.y + area.height {
                 break;
             }
+            let is_selected = selected_track
+                .as_deref()
+                .map(|s| s.eq_ignore_ascii_case(&track.name))
+                .unwrap_or(false);
 
             // Clear entire row first
             for x in area.x..area.x + area.width {
@@ -149,6 +182,11 @@ impl Widget for TrackerGrid<'_> {
                 Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::White)
+            };
+            let name_style = if is_selected {
+                name_style.add_modifier(Modifier::REVERSED)
+            } else {
+                name_style
             };
             let name = if track.name.len() > col_name { &track.name[..col_name] } else { &track.name };
             buf.set_string(area.x + (col_num + 1) as u16, y, &format!("{:<w$}", name, w = col_name), name_style);
@@ -184,12 +222,45 @@ impl Widget for TrackerGrid<'_> {
                 note_style,
             );
 
+            // Variations
+            let current = track.current_variation.as_deref().unwrap_or("main");
+            let mut keys: Vec<String> = track.variations.keys().cloned().collect();
+            keys.sort();
+            let vars_disp = std::iter::once("main".to_string())
+                .chain(keys.into_iter())
+                .map(|v| {
+                    let up = v.to_uppercase();
+                    if v == current {
+                        format!("[{}]", up)
+                    } else {
+                        up
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("|");
+            let vars_disp = if vars_disp.len() > col_vars {
+                &vars_disp[..col_vars]
+            } else {
+                &vars_disp
+            };
+            let vars_style = if track.current_variation.is_some() {
+                Style::default().fg(Color::Rgb(200, 160, 220))
+            } else {
+                dim
+            };
+            buf.set_string(
+                area.x + (col_num + 1 + col_name + 1 + col_sample + 1 + col_note + 1) as u16,
+                y,
+                &format!("{:<w$}", vars_disp, w = col_vars),
+                vars_style,
+            );
+
             // Pattern length
             let steps = Self::parse_steps(track);
             let step_count = steps.len();
             let len_str = if step_count > 0 { format!("{}", step_count) } else { "—".to_string() };
             buf.set_string(
-                area.x + (col_num + 1 + col_name + 1 + col_sample + 1 + col_note + 1) as u16,
+                area.x + (col_num + 1 + col_name + 1 + col_sample + 1 + col_note + 1 + col_vars + 1) as u16,
                 y,
                 &format!("{:>w$}", len_str, w = col_len),
                 dim,
@@ -350,7 +421,7 @@ mod tests {
             .render(area, &mut buf);
 
         let y = 1u16; // first track row (header is y=0)
-        let prefix_width = 3 + 1 + 10 + 1 + 14 + 1 + 10 + 1 + 4 + 2;
+        let prefix_width = 3 + 1 + 10 + 1 + 14 + 1 + 10 + 1 + 18 + 1 + 4 + 2;
         let grid_start_x = prefix_width as u16;
 
         let cell_expected = &buf[(grid_start_x + 2, y)];
@@ -358,5 +429,47 @@ mod tests {
 
         assert_ne!(cell_expected.bg, Color::Reset, "expected playhead bg at token_index=2");
         assert_eq!(cell_wrong.bg, Color::Reset, "did not expect playhead bg at global_step=1");
+    }
+
+    #[test]
+    fn tracker_grid_shows_variations_header() {
+        let mut song = Song::default();
+        let mut tr = Track::new("Synth");
+        tr.variations.insert("chorus".into(), Pattern::visual("c d e"));
+        song.tracks.push(tr);
+
+        let area = Rect { x: 0, y: 0, width: 100, height: 4 };
+        let mut buf = Buffer::empty(area);
+
+        TrackerGrid::new(&song).render(area, &mut buf);
+
+        let header = row(&buf, 0);
+        assert!(header.contains("VARS"), "header row was: {header}");
+    }
+
+    #[test]
+    fn tracker_grid_reverses_selected_track_name() {
+        let mut song = Song::default();
+        let mut a = Track::new("Kick");
+        a.pattern = Some(Pattern::visual("x..."));
+        let mut b = Track::new("Synth");
+        b.pattern = Some(Pattern::visual("c d e"));
+        song.tracks.push(a);
+        song.tracks.push(b);
+
+        let area = Rect { x: 0, y: 0, width: 120, height: 5 };
+        let mut buf = Buffer::empty(area);
+        TrackerGrid::new(&song)
+            .selected_track(Some("Synth".into()))
+            .render(area, &mut buf);
+
+        // Second track row is y=2 (header y=0, first track y=1).
+        let y = 2u16;
+        let name_start_x = (3 + 1) as u16;
+        let cell = &buf[(name_start_x, y)];
+        assert!(
+            cell.modifier.contains(Modifier::REVERSED),
+            "expected selected track name to be reversed"
+        );
     }
 }

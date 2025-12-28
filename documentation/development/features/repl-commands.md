@@ -28,14 +28,19 @@ All behavior described below lives in `src/repl/mod.rs`.
    - A bare number sets BPM (e.g. `140`).
    - `+ name [name...]` adds tracks (atomic).
    - `- name` removes a track.
+   - `>` is an alias for `go` (play).
+   - `<` is an alias for `go` (play).
 
 5. **Track-first syntax**
    - If the first token matches an existing track name, `try_track_first_command` parses **one or more segments** (left-to-right) and applies them **atomically per line** (commit + `audio::reload_song` once).
      - patterns: `kick x...`
      - sample selection: `kick ~ query...`, `kick ~[multi word query]`, `kick ~ "multi word query"`
      - variation set/switch: `kick.fill …`, `kick > fill`
+     - wildcard selectors: `* > chorus`, `*piano* bridge` (shorthand for `> bridge`)
      - per-track actions: `kick mute`, `kick unmute`, `kick solo`, `kick delay …`, `kick gen …`, `kick ai …`, `kick -3db`
      - chaining example: `kick x... ~[linn snare class] -3db`
+
+   - Macros are expanded before parsing when the line is a single token matching a stored macro name (see `macro` / `unmacro`).
 
 6. **Index-based commands**
    - Remaining lines are tokenized with `shlex` and executed via a `match` on the first token.
